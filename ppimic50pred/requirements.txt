@@ -1,0 +1,6 @@
+requests
+pandas
+rdkit
+chembl_webresource-client
+scikit-learn
+joblib
