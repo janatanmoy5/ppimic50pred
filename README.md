@@ -1,16 +1,5 @@
 ppimic50pred 
 
-Project Directory % tree
-.
-├── __init__.py
-├── __pycache__
-│   ├── __init__.cpython-312.pyc
-│   └── run.cpython-312.pyc
-├── random_forest_model.pkl
-├── requirements.txt
-├── run_offline.py
-├── run_online.py
-└── setup.py
 
 # ⚙️ Installation
 
