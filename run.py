@@ -2,18 +2,23 @@ import streamlit as st
 import math
 import requests
 import pandas as pd
-from rdkit import Chem, RDLogger
-from rdkit.Chem import Descriptors, Draw
-from chembl_webresource_client.new_client import new_client
-from sklearn.metrics import r2_score
 import joblib
 import warnings
+from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
 import os
 import time
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-RDLogger.DisableLog('rdApp.*')
+
+# ---------------- Try RDKit imports ---------------- #
+try:
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem import Descriptors, Draw
+    RDLogger.DisableLog('rdApp.*')
+    RDKit_AVAILABLE = True
+except ModuleNotFoundError:
+    RDKit_AVAILABLE = False
 
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
@@ -31,6 +36,8 @@ def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
 
 def is_smiles(s):
+    if not RDKit_AVAILABLE:
+        return False
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
@@ -77,6 +84,8 @@ def get_chembl_id_from_smiles_similarity(smiles, threshold=0.95):
     return None
 
 def compute_rdkit_descriptors(smiles):
+    if not RDKit_AVAILABLE:
+        return {}
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
@@ -118,6 +127,8 @@ def process_input(user_input):
     return descriptors, chembl_id, compound_name
 
 # ---------------- Experimental Data ---------------- #
+
+from chembl_webresource_client.new_client import new_client
 
 def get_top_ic50_values(chembl_id, top_n=3):
     if not chembl_id:
@@ -206,12 +217,15 @@ if user_input:
 
         # --- 2D Structure ---
         st.subheader("2D Structure Visualization")
-        mol = Chem.MolFromSmiles(descriptors['smiles'])
-        if mol:
-            img = Draw.MolToImage(mol, size=(300, 300))
-            st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
+        if RDKit_AVAILABLE:
+            mol = Chem.MolFromSmiles(descriptors['smiles'])
+            if mol:
+                img = Draw.MolToImage(mol, size=(300, 300))
+                st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
+            else:
+                st.warning("Could not render molecular structure.")
         else:
-            st.warning("Could not render molecular structure.")
+            st.warning("2D molecular visualization not available in Streamlit Cloud.")
 
         # --- Prediction ---
         st.subheader("Prediction Details")
@@ -240,4 +254,3 @@ if user_input:
                 st.info("Experimental IC50 data not available for local compounds.")
     else:
         st.error("Could not make prediction.")
-
