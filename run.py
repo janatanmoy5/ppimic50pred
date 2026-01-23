@@ -1,17 +1,18 @@
+# run.py
 import streamlit as st
 import math
 import requests
 import pandas as pd
 import joblib
 import warnings
-from sklearn.metrics import r2_score
-from sklearn.exceptions import InconsistentVersionWarning
 import os
 import time
+from sklearn.metrics import r2_score
+from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 
-# ---------------- Try RDKit imports ---------------- #
+# ----------------- RDKit Imports -----------------
 try:
     from rdkit import Chem, RDLogger
     from rdkit.Chem import Descriptors, Draw
@@ -31,7 +32,6 @@ LOCAL_COMPOUNDS = {
 }
 
 # ---------------- Utility Functions ---------------- #
-
 def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
 
@@ -41,7 +41,6 @@ def is_smiles(s):
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
-    """Requests with retry support."""
     for attempt in range(retries):
         try:
             r = requests.get(url, timeout=timeout)
@@ -127,7 +126,6 @@ def process_input(user_input):
     return descriptors, chembl_id, compound_name
 
 # ---------------- Experimental Data ---------------- #
-
 from chembl_webresource_client.new_client import new_client
 
 def get_top_ic50_values(chembl_id, top_n=3):
@@ -172,7 +170,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
     return valid[:top_n]
 
 # ---------------- Prediction ---------------- #
-
 def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
     cols_to_drop = [
@@ -200,7 +197,6 @@ def predict_ic50(descriptor_dict, model_path):
     return log_pred, confidence
 
 # ---------------- Streamlit Interface ---------------- #
-
 st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
 st.title("⚗️ PPIM-IC50Pred Webserver")
 
@@ -220,12 +216,12 @@ if user_input:
         if RDKit_AVAILABLE:
             mol = Chem.MolFromSmiles(descriptors['smiles'])
             if mol:
-                img = Draw.MolToImage(mol, size=(300, 300))
-                st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
+                img = Draw.MolToImage(mol, size=(300,300))
+                st.image(img, caption=f"{compound_name if compound_name else chembl_id}")
             else:
                 st.warning("Could not render molecular structure.")
         else:
-            st.warning("2D molecular visualization not available in Streamlit Cloud.")
+            st.warning("2D structure visualization not available in this environment.")
 
         # --- Prediction ---
         st.subheader("Prediction Details")
