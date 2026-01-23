@@ -1,7 +1,7 @@
 
 streamlit
 pandas
-numpy==1.23.5
+numpy
 scikit-learn
 joblib
 chembl-webresource-client
