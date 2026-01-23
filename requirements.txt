@@ -1,9 +1,8 @@
 streamlit
 pandas
-numpy
 scikit-learn
 joblib
 chembl-webresource-client
 requests
 pillow
-rdkit-pypi
+rdkit-pypi==2023.9.5
