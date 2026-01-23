@@ -1,8 +1,20 @@
+# Streamlit app
 streamlit
+
+# Data handling
 pandas
+numpy==1.23.5
+
+# Machine learning
 scikit-learn
 joblib
+
+# ChEMBL API
 chembl-webresource-client
 requests
+
+# Image handling
 pillow
+
+# RDKit for chemistry calculations and 2D structure
 rdkit-pypi==2023.9.5
