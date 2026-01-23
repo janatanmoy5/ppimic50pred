@@ -1,6 +1,6 @@
 requests
 pandas
-rdkit
+rdkit-pypi
 chembl_webresource-client
 scikit-learn
 joblib
