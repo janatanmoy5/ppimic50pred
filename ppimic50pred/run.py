@@ -3,7 +3,7 @@ import math
 import requests
 import pandas as pd
 from rdkit import Chem, RDLogger
-from rdkit.Chem import Descriptors, Draw
+from rdkit.Chem import Descriptors
 from chembl_webresource_client.new_client import new_client
 from sklearn.metrics import r2_score
 import joblib
@@ -34,7 +34,6 @@ def is_smiles(s):
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
-    """Requests with retry support."""
     for attempt in range(retries):
         try:
             r = requests.get(url, timeout=timeout)
@@ -86,7 +85,6 @@ def process_input(user_input):
     user_input = user_input.strip().replace(" ", "")
     chembl_id, smiles, compound_name = None, None, None
 
-    # --- Local fallback first ---
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
         chembl_id = None
@@ -204,15 +202,6 @@ if user_input:
         st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
         st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
-        # --- 2D Structure ---
-        st.subheader("2D Structure Visualization")
-        mol = Chem.MolFromSmiles(descriptors['smiles'])
-        if mol:
-            img = Draw.MolToImage(mol, size=(300, 300))
-            st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
-        else:
-            st.warning("Could not render molecular structure.")
-
         # --- Prediction ---
         st.subheader("Prediction Details")
         log_val, conf = predict_ic50(descriptors, MODEL_PATH)
@@ -240,4 +229,3 @@ if user_input:
                 st.info("Experimental IC50 data not available for local compounds.")
     else:
         st.error("Could not make prediction.")
-
