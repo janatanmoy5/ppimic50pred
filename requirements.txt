@@ -1,5 +1,4 @@
 streamlit
-rdkit-pypi
 pandas
 numpy
 scikit-learn
@@ -7,3 +6,4 @@ joblib
 chembl-webresource-client
 requests
 pillow
+rdkit-pypi
