@@ -1,4 +1,5 @@
 streamlit
+rdkit-pypi
 pandas
 numpy
 scikit-learn
