@@ -1,4 +1,3 @@
-# run.py
 import os
 import time
 import math
@@ -8,14 +7,13 @@ import requests
 import pandas as pd
 import streamlit as st
 
-from rdkit import Chem, RDLogger
+import datamol as dm
 from rdkit.Chem import Descriptors, Draw
 from chembl_webresource_client.new_client import new_client
 from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-RDLogger.DisableLog('rdApp.*')
 
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
@@ -32,7 +30,11 @@ def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
 
 def is_smiles(s):
-    return Chem.MolFromSmiles(s) is not None
+    try:
+        mol = dm.to_mol(s)
+        return mol is not None
+    except:
+        return False
 
 def safe_get(url, retries=3, timeout=10):
     for attempt in range(retries):
@@ -77,7 +79,7 @@ def get_chembl_id_from_smiles_similarity(smiles, threshold=0.95):
     return None
 
 def compute_rdkit_descriptors(smiles):
-    mol = Chem.MolFromSmiles(smiles)
+    mol = dm.to_mol(smiles)
     if mol is None:
         return None
     return {name: func(mol) for name, func in Descriptors.descList}
@@ -86,10 +88,9 @@ def process_input(user_input):
     user_input = user_input.strip().replace(" ", "")
     chembl_id, smiles, compound_name = None, None, None
 
-    # --- Local fallback first ---
+    # Local fallback
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
-        chembl_id = None
         compound_name = user_input
 
     elif is_chembl_id(user_input):
@@ -206,7 +207,7 @@ if user_input:
 
         # --- 2D Structure ---
         st.subheader("2D Structure Visualization")
-        mol = Chem.MolFromSmiles(descriptors['smiles'])
+        mol = dm.to_mol(descriptors['smiles'])
         if mol:
             img = Draw.MolToImage(mol, size=(300, 300))
             st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
