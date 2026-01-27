@@ -18,7 +18,6 @@ RDLogger.DisableLog("rdApp.*")
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 
-# ---------------- Local Fallback Compounds ---------------- #
 LOCAL_COMPOUNDS = {
     "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
     "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
@@ -59,7 +58,6 @@ def search_chembl_by_name(name):
     return None, None
 
 def get_similar_names(query):
-    """Return up to 5 similar chemical names from ChEMBL."""
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={query}&format=json"
     r = safe_get(url)
     if not r:
@@ -231,7 +229,7 @@ def predict_ic50(descriptor_dict, model_path):
 
     return log_pred, confidence
 
-# ---------------- Streamlit Layout (DyeMind‑style, Responsive) ---------------- #
+# ---------------- Streamlit Layout (PubChem‑style, Responsive) ---------------- #
 
 st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 
@@ -241,153 +239,176 @@ st.markdown(
     body {
         background-color: #f5f6fa;
     }
-    .main-container {
-        max-width: 900px;
+    .pc-main {
+        max-width: 1100px;
         margin: 0 auto;
         padding: 1.5rem 1rem 3rem 1rem;
     }
-    .app-title {
-        text-align: center;
-        margin-bottom: 0.25rem;
-        font-size: 1.9rem;
+    .pc-header-title {
+        font-size: 2.0rem;
         font-weight: 600;
+        margin-bottom: 0.2rem;
+        text-align: left;
     }
-    .app-subtitle {
-        text-align: center;
+    .pc-header-subtitle {
         color: #555;
-        margin-bottom: 1.5rem;
         font-size: 0.95rem;
+        margin-bottom: 1.2rem;
+        text-align: left;
     }
-    .card {
+    .pc-card {
         background-color: #ffffff;
-        border-radius: 12px;
-        padding: 1.2rem 1.3rem;
+        border-radius: 8px;
+        padding: 1.1rem 1.2rem;
         margin-bottom: 1rem;
-        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
     }
-    .card-title {
+    .pc-card-title {
         font-weight: 600;
         margin-bottom: 0.6rem;
         font-size: 1.05rem;
     }
-    .small-label {
-        font-size: 0.9rem;
-        color: #555;
+    .pc-structure-img img {
+        max-width: 280px;   /* desktop cap */
+        width: 100%;        /* mobile full width */
+        height: auto;
+    }
+    @media (max-width: 768px) {
+        .pc-header-title {
+            text-align: center;
+        }
+        .pc-header-subtitle {
+            text-align: center;
+        }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-with st.container():
-    st.markdown("<div class='main-container'>", unsafe_allow_html=True)
+st.markdown("<div class='pc-main'>", unsafe_allow_html=True)
 
-    st.markdown("<div class='app-title'>PPIM‑IC50Pred</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='app-subtitle'>IC50 prediction server for small molecules</div>",
-        unsafe_allow_html=True,
-    )
+# Header (PubChem‑like)
+st.markdown("<div class='pc-header-title'>PPIM‑IC50Pred</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='pc-header-subtitle'>IC50 prediction server for small molecules</div>",
+    unsafe_allow_html=True,
+)
 
-    # -------- Input Card -------- #
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>Search compound</div>", unsafe_allow_html=True)
-    user_input = st.text_input(
-        "Enter chemical name, ChEMBL ID, or SMILES:",
-        placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
-        label_visibility="collapsed",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+# Search card
+st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+st.markdown("<div class='pc-card-title'>Search compound</div>", unsafe_allow_html=True)
+user_input = st.text_input(
+    "Enter chemical name, ChEMBL ID, or SMILES:",
+    placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
+)
+st.markdown("</div>", unsafe_allow_html=True)
 
-    if user_input:
-        descriptors, chembl_id, compound_name = process_input(user_input)
+if user_input:
+    descriptors, chembl_id, compound_name = process_input(user_input)
 
-        # If not found → suggestions + PubMed
-        if descriptors is None:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.markdown(
-                "<div class='card-title'>Compound not found in ChEMBL</div>",
-                unsafe_allow_html=True,
-            )
-            st.write(
-                "The name or identifier you entered could not be resolved to a compound in ChEMBL."
-            )
-
-            suggestions = get_similar_names(user_input)
-            if suggestions:
-                st.markdown("**Did you mean:**")
-                for name, cid in suggestions:
-                    st.markdown(f"- **{name}** — `{cid}`")
-            else:
-                st.info("No similar compounds found in ChEMBL.")
-
-            st.markdown("**PubMed reference search:**")
-            st.markdown(
-                f"[Search PubMed for **{user_input}**](https://pubmed.ncbi.nlm.nih.gov/?term={user_input})"
-            )
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.stop()
-
-        # -------- Compound Summary Card -------- #
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
+    # Not found → suggestions + PubMed
+    if descriptors is None:
+        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='card-title'>Compound summary</div>", unsafe_allow_html=True
-        )
-        st.markdown(
-            f"**Name:** {compound_name if compound_name else 'Unknown'}",
-        )
-        st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
-        st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # -------- Structure Card -------- #
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>2D structure</div>", unsafe_allow_html=True
-        )
-        mol = Chem.MolFromSmiles(descriptors["smiles"])
-        if mol:
-            img = Draw.MolToImage(mol, size=(260, 260))
-            st.image(img, use_column_width=True)
-        else:
-            st.info("Could not render molecular structure.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # -------- Prediction Card -------- #
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Predicted IC50</div>", unsafe_allow_html=True
-        )
-        log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-        st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
-        if conf is not None:
-            st.markdown(f"**Model confidence (R²):** `{conf:.4f}`")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # -------- Experimental Data Card -------- #
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='card-title'>Experimental IC50 data (ChEMBL)</div>",
+            "<div class='pc-card-title'>Compound not found in ChEMBL</div>",
             unsafe_allow_html=True,
         )
-        exp_entries = get_top_ic50_values(chembl_id, top_n=3)
+        st.write(
+            "The name or identifier you entered could not be resolved to a compound in ChEMBL."
+        )
 
-        if exp_entries:
-            for i, e in enumerate(exp_entries, 1):
-                st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-                st.markdown(
-                    f"- IC50: `{float(e['ic50_value']):.4f} {e['units']}`",
-                )
-                st.markdown(
-                    f"- pChEMBL: `{float(e['pchembl_value']):.4f}`",
-                )
-                if e["log10_ic50"] is not None:
-                    st.markdown(
-                        f"- log(IC50): `{float(e['log10_ic50']):.4f}`",
-                    )
-                st.markdown("---")
+        suggestions = get_similar_names(user_input)
+        if suggestions:
+            st.markdown("**Did you mean:**")
+            for name, cid in suggestions:
+                st.markdown(f"- **{name}** — `{cid}`")
         else:
-            st.info("No experimental IC50 values found in ChEMBL for this compound.")
+            st.info("No similar compounds found in ChEMBL.")
+
+        st.markdown("**PubMed reference search:**")
+        st.markdown(
+            f"[Search PubMed for **{user_input}**](https://pubmed.ncbi.nlm.nih.gov/?term={user_input})"
+        )
         st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+
+    # Compound summary
+    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-card-title'>Compound summary</div>", unsafe_allow_html=True)
+    st.markdown(f"**Name:** {compound_name if compound_name else 'Unknown'}")
+    st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
+    st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 2D structure
+    st.markdown("<div class='pc-card pc-structure-img'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-card-title'>2D structure</div>", unsafe_allow_html=True)
+    mol = Chem.MolFromSmiles(descriptors["smiles"])
+    if mol:
+        img = Draw.MolToImage(mol, size=(260, 260))
+        st.image(img, use_column_width=False)
+    else:
+        st.info("Could not render molecular structure.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Predicted IC50 (main focus)
+    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-card-title'>Predicted IC50</div>", unsafe_allow_html=True)
+    log_val, conf = predict_ic50(descriptors, MODEL_PATH)
+    st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
+
+    try:
+        ic50_nM = 10 ** log_val
+        st.markdown(f"**Predicted IC50 (nM):** `{ic50_nM:.2f}`")
+        if ic50_nM <= 100:
+            st.markdown("**Interpretation:** Strong predicted potency (low IC50).")
+        elif ic50_nM <= 1000:
+            st.markdown("**Interpretation:** Moderate predicted potency.")
+        else:
+            st.markdown("**Interpretation:** Weak predicted potency (high IC50).")
+    except Exception:
+        pass
+
+    if conf is not None:
+        st.markdown(f"**Model confidence (R²):** `{conf:.4f}`")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # Experimental IC50
+    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='pc-card-title'>Experimental IC50 data (ChEMBL)</div>",
+        unsafe_allow_html=True,
+    )
+    exp_entries = get_top_ic50_values(chembl_id, top_n=3)
+
+    if exp_entries:
+        for i, e in enumerate(exp_entries, 1):
+            st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
+            st.markdown(f"- IC50: `{float(e['ic50_value']):.4f} {e['units']}`")
+            st.markdown(f"- pChEMBL: `{float(e['pchembl_value']):.4f}`")
+            if e["log10_ic50"] is not None:
+                st.markdown(f"- log(IC50): `{float(e['log10_ic50']):.4f}`")
+            st.markdown("---")
+    else:
+        st.info("No experimental IC50 values found in ChEMBL for this compound.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # PubChem / PubMed links
+    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-card-title'>External resources</div>", unsafe_allow_html=True)
+
+    query_name = compound_name if compound_name else descriptors["smiles"]
+    st.markdown(
+        f"- **PubChem compound search:** "
+        f"[Open](https://pubchem.ncbi.nlm.nih.gov/#query={query_name})"
+    )
+    st.markdown(
+        f"- **PubMed literature search:** "
+        f"[Open](https://pubmed.ncbi.nlm.nih.gov/?term={query_name})"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
