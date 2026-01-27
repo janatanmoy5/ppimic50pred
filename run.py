@@ -13,7 +13,7 @@ import os
 import time
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-RDLogger.DisableLog('rdApp.*')
+RDLogger.DisableLog("rdApp.*")
 
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
@@ -22,15 +22,15 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 LOCAL_COMPOUNDS = {
     "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
     "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
-    "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
+    "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
 }
 
 # ---------------- Utility Functions ---------------- #
 
-def is_chembl_id(s):
+def is_chembl_id(s: str) -> bool:
     return s.upper().startswith("CHEMBL")
 
-def is_smiles(s):
+def is_smiles(s: str) -> bool:
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
@@ -53,7 +53,9 @@ def search_chembl_by_name(name):
     molecules = r.json().get("molecules", [])
     if molecules:
         mol = molecules[0]
-        return mol.get("molecule_chembl_id"), mol.get("molecule_structures", {}).get("canonical_smiles")
+        cid = mol.get("molecule_chembl_id")
+        smi = mol.get("molecule_structures", {}).get("canonical_smiles")
+        return cid, smi
     return None, None
 
 def get_similar_names(query):
@@ -96,10 +98,8 @@ def compute_rdkit_descriptors(smiles):
 
 def process_input(user_input):
     user_input = user_input.strip()
-
     chembl_id, smiles, compound_name = None, None, None
 
-    # Local fallback
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
         compound_name = user_input
@@ -149,8 +149,9 @@ def get_top_ic50_values(chembl_id, top_n=3):
             continue
 
         try:
-            log10_val = math.log10(float(val)) if float(val) > 0 else None
-        except:
+            val_num = float(val)
+            log10_val = math.log10(val_num) if val_num > 0 else None
+        except Exception:
             log10_val = None
 
         target_name = "Unknown"
@@ -159,18 +160,20 @@ def get_top_ic50_values(chembl_id, top_n=3):
             try:
                 target_data = target_client.get(tid)
                 target_name = target_data.get("pref_name") or "Unknown"
-            except:
+            except Exception:
                 pass
 
-        valid.append({
-            "chembl_id": chembl_id,
-            "ic50_value": val,
-            "units": units,
-            "pchembl_value": pchembl,
-            "log10_ic50": log10_val,
-            "target_name": target_name,
-            "target_id": tid
-        })
+        valid.append(
+            {
+                "chembl_id": chembl_id,
+                "ic50_value": val,
+                "units": units,
+                "pchembl_value": pchembl,
+                "log10_ic50": log10_val,
+                "target_name": target_name,
+                "target_id": tid,
+            }
+        )
 
     valid.sort(key=lambda x: x["pchembl_value"], reverse=True)
     return valid[:top_n]
@@ -181,11 +184,30 @@ def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
 
     cols_to_drop = [
-        "NumRadicalElectrons", "SMR_VSA8", "SlogP_VSA9", "fr_aldehyde", "fr_azide",
-        "fr_barbitur", "fr_benzodiazepine", "fr_diazo", "fr_epoxide", "fr_isocyan",
-        "fr_lactam", "fr_nitroso", "fr_prisulfonamd", "fr_quatN", "fr_thiocyan",
-        "fr_term_acetylene", "fr_phos_ester", "fr_oxime", "fr_dihydropyridine",
-        "fr_phos_acid", "fr_hdrzine", "fr_N_O", "chembl_id", "smiles"
+        "NumRadicalElectrons",
+        "SMR_VSA8",
+        "SlogP_VSA9",
+        "fr_aldehyde",
+        "fr_azide",
+        "fr_barbitur",
+        "fr_benzodiazepine",
+        "fr_diazo",
+        "fr_epoxide",
+        "fr_isocyan",
+        "fr_lactam",
+        "fr_nitroso",
+        "fr_prisulfonamd",
+        "fr_quatN",
+        "fr_thiocyan",
+        "fr_term_acetylene",
+        "fr_phos_ester",
+        "fr_oxime",
+        "fr_dihydropyridine",
+        "fr_phos_acid",
+        "fr_hdrzine",
+        "fr_N_O",
+        "chembl_id",
+        "smiles",
     ]
 
     df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
@@ -204,91 +226,168 @@ def predict_ic50(descriptor_dict, model_path):
             X_train_scaled = scaler.transform(saved["X_train"])
             y_train_pred = model.predict(X_train_scaled)
             confidence = r2_score(saved["y_train"], y_train_pred)
-        except:
+        except Exception:
             confidence = None
 
     return log_pred, confidence
 
-# ---------------- Streamlit Interface (Mobile‑First) ---------------- #
+# ---------------- Streamlit Layout (DyeMind‑style, Responsive) ---------------- #
 
-st.set_page_config(page_title="PPIM‑IC50Pred", layout="centered")
+st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 
 st.markdown(
-    "<h2 style='text-align:center;'>PPIM‑IC50Pred</h2>"
-    "<p style='text-align:center; color:#555;'>IC50 Prediction Server</p>",
+    """
+    <style>
+    body {
+        background-color: #f5f6fa;
+    }
+    .main-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem 1rem;
+    }
+    .app-title {
+        text-align: center;
+        margin-bottom: 0.25rem;
+        font-size: 1.9rem;
+        font-weight: 600;
+    }
+    .app-subtitle {
+        text-align: center;
+        color: #555;
+        margin-bottom: 1.5rem;
+        font-size: 0.95rem;
+    }
+    .card {
+        background-color: #ffffff;
+        border-radius: 12px;
+        padding: 1.2rem 1.3rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+    }
+    .card-title {
+        font-weight: 600;
+        margin-bottom: 0.6rem;
+        font-size: 1.05rem;
+    }
+    .small-label {
+        font-size: 0.9rem;
+        color: #555;
+    }
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
-st.markdown("---")
+with st.container():
+    st.markdown("<div class='main-container'>", unsafe_allow_html=True)
 
-# ---------------- Input Area ---------------- #
+    st.markdown("<div class='app-title'>PPIM‑IC50Pred</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='app-subtitle'>IC50 prediction server for small molecules</div>",
+        unsafe_allow_html=True,
+    )
 
-st.markdown("### Search Compound")
-user_input = st.text_input(
-    "Enter chemical name, ChEMBL ID, or SMILES:",
-    placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
-)
+    # -------- Input Card -------- #
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>Search compound</div>", unsafe_allow_html=True)
+    user_input = st.text_input(
+        "Enter chemical name, ChEMBL ID, or SMILES:",
+        placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
+        label_visibility="collapsed",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-if user_input:
-    descriptors, chembl_id, compound_name = process_input(user_input)
+    if user_input:
+        descriptors, chembl_id, compound_name = process_input(user_input)
 
-    # If not found → suggestions + PubMed
-    if descriptors is None:
-        st.warning("Compound not found in ChEMBL.")
+        # If not found → suggestions + PubMed
+        if descriptors is None:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown(
+                "<div class='card-title'>Compound not found in ChEMBL</div>",
+                unsafe_allow_html=True,
+            )
+            st.write(
+                "The name or identifier you entered could not be resolved to a compound in ChEMBL."
+            )
 
-        st.markdown("#### 🔍 Suggested Matches")
-        suggestions = get_similar_names(user_input)
+            suggestions = get_similar_names(user_input)
+            if suggestions:
+                st.markdown("**Did you mean:**")
+                for name, cid in suggestions:
+                    st.markdown(f"- **{name}** — `{cid}`")
+            else:
+                st.info("No similar compounds found in ChEMBL.")
 
-        if suggestions:
-            for name, cid in suggestions:
-                st.markdown(f"- **{name}** — `{cid}`")
-        else:
-            st.info("No similar compounds found.")
+            st.markdown("**PubMed reference search:**")
+            st.markdown(
+                f"[Search PubMed for **{user_input}**](https://pubmed.ncbi.nlm.nih.gov/?term={user_input})"
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.stop()
 
-        st.markdown("#### 📚 PubMed Reference")
+        # -------- Compound Summary Card -------- #
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown(
-            f"[Search PubMed for **{user_input}**](https://pubmed.ncbi.nlm.nih.gov/?term={user_input})"
+            "<div class='card-title'>Compound summary</div>", unsafe_allow_html=True
         )
+        st.markdown(
+            f"**Name:** {compound_name if compound_name else 'Unknown'}",
+        )
+        st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
+        st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        st.stop()
+        # -------- Structure Card -------- #
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='card-title'>2D structure</div>", unsafe_allow_html=True
+        )
+        mol = Chem.MolFromSmiles(descriptors["smiles"])
+        if mol:
+            img = Draw.MolToImage(mol, size=(260, 260))
+            st.image(img, use_column_width=True)
+        else:
+            st.info("Could not render molecular structure.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------- Compound Summary ---------------- #
+        # -------- Prediction Card -------- #
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='card-title'>Predicted IC50</div>", unsafe_allow_html=True
+        )
+        log_val, conf = predict_ic50(descriptors, MODEL_PATH)
+        st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
+        if conf is not None:
+            st.markdown(f"**Model confidence (R²):** `{conf:.4f}`")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### Compound Summary")
-    st.markdown(f"**Name:** {compound_name if compound_name else 'Unknown'}")
-    st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
-    st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
+        # -------- Experimental Data Card -------- #
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='card-title'>Experimental IC50 data (ChEMBL)</div>",
+            unsafe_allow_html=True,
+        )
+        exp_entries = get_top_ic50_values(chembl_id, top_n=3)
 
-    # ---------------- Structure ---------------- #
+        if exp_entries:
+            for i, e in enumerate(exp_entries, 1):
+                st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
+                st.markdown(
+                    f"- IC50: `{float(e['ic50_value']):.4f} {e['units']}`",
+                )
+                st.markdown(
+                    f"- pChEMBL: `{float(e['pchembl_value']):.4f}`",
+                )
+                if e["log10_ic50"] is not None:
+                    st.markdown(
+                        f"- log(IC50): `{float(e['log10_ic50']):.4f}`",
+                    )
+                st.markdown("---")
+        else:
+            st.info("No experimental IC50 values found in ChEMBL for this compound.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("### 2D Structure")
-    mol = Chem.MolFromSmiles(descriptors["smiles"])
-    if mol:
-        img = Draw.MolToImage(mol, size=(250, 250))
-        st.image(img, use_column_width=True)
-    else:
-        st.info("Could not render molecular structure.")
-
-    # ---------------- Prediction ---------------- #
-
-    st.markdown("### Predicted IC50")
-    log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-
-    st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
-    if conf is not None:
-        st.markdown(f"**Model Confidence (R²):** `{conf:.4f}`")
-
-    # ---------------- Experimental Data ---------------- #
-
-    st.markdown("### Experimental IC50 Data (ChEMBL)")
-    exp_entries = get_top_ic50_values(chembl_id, top_n=3)
-
-    if exp_entries:
-        for i, e in enumerate(exp_entries, 1):
-            st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-            st.markdown(f"- IC50: `{float(e['ic50_value']):.4f} {e['units']}`")
-            st.markdown(f"- pChEMBL: `{float(e['pchembl_value']):.4f}`")
-            st.markdown(f"- log(IC50): `{float(e['log10_ic50']):.4f}`")
-            st.markdown("---")
-    else:
-        st.info("No experimental IC50 values found.")
+    st.markdown("</div>", unsafe_allow_html=True)
