@@ -40,7 +40,7 @@ def safe_get(url, retries=3, timeout=10):
             return r
         except requests.RequestException:
             if attempt < retries - 1:
-                time.sleep(1.0)
+                time.sleep(0.8)
             else:
                 return None
 
@@ -199,20 +199,12 @@ def chembl_similar_names(query):
             suggestions.append((name, cid))
     return suggestions
 
-# ---------------- PubChem helpers ---------------- #
+# ---------------- PubChem helpers (robust name → SMILES) ---------------- #
 
-def pubchem_name_to_cid(name):
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/cids/JSON"
-    r = safe_get(url)
-    if not r:
-        return None
-    cids = r.json().get("IdentifierList", {}).get("CID", [])
-    return cids[0] if cids else None
-
-def pubchem_cid_to_smiles(cid):
+def pubchem_name_to_smiles_exact(name):
     url = (
-        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/"
-        f"{cid}/property/CanonicalSMILES/JSON"
+        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
+        f"{name}/property/CanonicalSMILES/JSON"
     )
     r = safe_get(url)
     if not r:
@@ -222,9 +214,60 @@ def pubchem_cid_to_smiles(cid):
         return None
     return props[0].get("CanonicalSMILES")
 
-def pubchem_smiles_normalize(smiles):
-    # optional: just validate via PubChem; here we just return original if valid
-    return smiles if Chem.MolFromSmiles(smiles) is not None else None
+def pubchem_synonym_search_smiles(name):
+    """
+    Use synonym search: /synonym/<name>/property/CanonicalSMILES/JSON
+    This often catches brand names and alternate spellings.
+    """
+    url = (
+        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/synonym/"
+        f"{name}/property/CanonicalSMILES/JSON"
+    )
+    r = safe_get(url)
+    if not r:
+        return None
+    props = r.json().get("PropertyTable", {}).get("Properties", [])
+    if not props:
+        return None
+    return props[0].get("CanonicalSMILES")
+
+def pubchem_name_to_smiles_robust(name):
+    """
+    Robust resolver:
+    1) exact name
+    2) lower, upper
+    3) hyphen removed
+    4) synonym search
+    5) synonym search on variants
+    """
+    candidates = set()
+    candidates.add(name)
+    candidates.add(name.strip())
+    candidates.add(name.lower())
+    candidates.add(name.upper())
+    candidates.add(name.replace(" ", ""))
+    candidates.add(name.replace("-", ""))
+    candidates.add(name.replace("‑", ""))  # non-breaking hyphen
+
+    # simple Nutlin-style tweak: flip last 'a'/'A'
+    if name.endswith("A"):
+        candidates.add(name[:-1] + "a")
+    if name.endswith("a"):
+        candidates.add(name[:-1] + "A")
+
+    # 1) direct name → SMILES
+    for n in candidates:
+        smi = pubchem_name_to_smiles_exact(n)
+        if smi:
+            return smi
+
+    # 2) synonym search
+    for n in candidates:
+        smi = pubchem_synonym_search_smiles(n)
+        if smi:
+            return smi
+
+    return None
 
 # ---------------- RDKit descriptors ---------------- #
 
@@ -238,7 +281,7 @@ def compute_rdkit_descriptors(smiles):
 
 def process_input(user_input):
     user_input = user_input.strip()
-    chembl_id, smiles, compound_name, pubchem_cid, source = None, None, None, None, None
+    chembl_id, smiles, compound_name, source = None, None, None, None
 
     # Local fallback
     if user_input.lower() in LOCAL_COMPOUNDS:
@@ -259,31 +302,27 @@ def process_input(user_input):
         chembl_id = chembl_similarity_smiles_to_id(smiles)
         source = "smiles"
 
-    # Name: try ChEMBL first, then PubChem
+    # Name: try ChEMBL first, then robust PubChem
     else:
         chembl_id, smiles = chembl_search_name_first(user_input)
         compound_name = user_input
         if smiles:
             source = "chembl_name"
         else:
-            cid = pubchem_name_to_cid(user_input)
-            if cid:
-                pubchem_cid = cid
-                smiles = pubchem_cid_to_smiles(cid)
-                if smiles:
-                    source = "pubchem_name"
+            smiles = pubchem_name_to_smiles_robust(user_input)
+            if smiles:
+                source = "pubchem_name"
 
     if not smiles:
-        return None, None, None, None, None
+        return None, None, None, None
 
-    smiles = pubchem_smiles_normalize(smiles) or smiles
     descriptors = compute_rdkit_descriptors(smiles)
     if descriptors is None:
-        return None, None, None, None, None
+        return None, None, None, None
 
     descriptors["chembl_id"] = chembl_id
     descriptors["smiles"] = smiles
-    return descriptors, chembl_id, compound_name, pubchem_cid, source
+    return descriptors, chembl_id, compound_name, source
 
 # ---------------- Prediction ---------------- #
 
@@ -343,12 +382,12 @@ st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
 st.markdown("<div class='pc-section-title'>Search compound</div>", unsafe_allow_html=True)
 user_input = st.text_input(
     "Enter chemical name, ChEMBL ID, or SMILES:",
-    placeholder="e.g., Nutlin, Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
+    placeholder="e.g., Nutlin-3a, Nutlin-3A, Nutlin, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
 if user_input:
-    descriptors, chembl_id, compound_name, pubchem_cid, source = process_input(user_input)
+    descriptors, chembl_id, compound_name, source = process_input(user_input)
 
     if descriptors is None:
         st.error("No matching compound found in ChEMBL or PubChem.")
@@ -397,7 +436,6 @@ if user_input:
     st.markdown("<div class='pc-section-title'>Compound summary</div>", unsafe_allow_html=True)
     st.markdown(f"**Name:** {compound_name or 'Unknown'}")
     st.markdown(f"**ChEMBL ID:** {chembl_id or 'N/A'}")
-    st.markdown(f"**PubChem CID:** {pubchem_cid or 'N/A'}")
     st.markdown(f"**Source used for SMILES:** {source or 'Unknown'}")
     st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
     st.markdown("</div>", unsafe_allow_html=True)
