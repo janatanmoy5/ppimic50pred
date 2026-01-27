@@ -2,26 +2,32 @@ import streamlit as st
 import pandas as pd
 import subprocess
 import sys
+import os
 
 # ---------------- Install missing packages dynamically ---------------- #
-def install(package):
-    """Install package via pip if not already installed."""
+def install_package(package, github_repo=None):
+    """Install package via pip if not already installed. If github_repo is provided, install from GitHub."""
     try:
         __import__(package)
     except ModuleNotFoundError:
-        st.info(f"Installing {package}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        if github_repo:
+            st.info(f"Installing {package} from GitHub...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "git+" + github_repo])
+        else:
+            st.info(f"Installing {package} via pip...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 # ---------------- Install required packages ---------------- #
-for pkg in ["rdkit-pypi", "chembl_webresource_client", "pandas", "scikit-learn"]:
-    install(pkg)
+# RDKit from GitHub, others from PyPI
+install_package("rdkit", "https://github.com/kuelumbus/rdkit-pypi.git")
+for pkg in ["chembl_webresource_client", "pandas", "scikit-learn"]:
+    install_package(pkg)
 
 # ---------------- Now import after install ---------------- #
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from chembl_webresource_client.new_client import new_client
 import joblib
-import os
 
 # ---------------- Streamlit App ---------------- #
 st.set_page_config(page_title="Chemical Activity Predictor", layout="centered")
