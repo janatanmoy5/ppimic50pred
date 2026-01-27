@@ -1,63 +1,81 @@
-from shiny import App, ui, render, reactive
+# run.py - Shiny for Python App for chemical input and MFI/prediction
+# Requires: shiny>=0.11, pandas>=2.1.1, requests>=2.32.0
+
+from shiny import App, ui, reactive, render
 import pandas as pd
-import joblib
-from rdkit import Chem
+import requests
 
-# ---------------- CONFIG ---------------- #
-MODEL_PATH = "random_forest_model.pkl"
-
-# ---------------- Local fallback compounds ---------------- #
+# ------------------------------
+# Local fallback compounds
+# ------------------------------
 LOCAL_COMPOUNDS = {
     "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
     "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
 }
 
-# ---------------- Helper Functions ---------------- #
-def calculate_mfi(smiles: str) -> pd.DataFrame:
-    alleles = ["DR1", "DR10", "DR103", "DR51", "DR15", "DR16"]
-    mean_mfi = [abs(hash(smiles + a)) % 25000 for a in alleles]
-
-    df = pd.DataFrame({
-        "Group": ["DR1c"]*3 + ["DR51c"]*3,
-        "Allele": alleles[:3] + alleles[3:],
-        "MeanMFI": mean_mfi
-    })
-    return df
-
-def load_model():
-    try:
-        model = joblib.load(MODEL_PATH)
-        return model
-    except FileNotFoundError:
-        return None
-
-# ---------------- UI ---------------- #
+# ------------------------------
+# Shiny UI
+# ------------------------------
 app_ui = ui.page_fluid(
-    ui.h2("Interactive Mean MFI Panel"),
-    ui.input_text("compound", "Enter Compound Name or SMILES:", value="aspirin"),
+    ui.h2("Chemical MFI / Prediction Panel"),
+    ui.input_text("chemical_name", "Enter Chemical Name:", value="aspirin"),
     ui.input_action_button("run_btn", "Run"),
-    ui.output_table("mfi_table")
+    ui.output_text_verbatim("status_text"),
+    ui.output_table("result_table")
 )
 
-# ---------------- Server ---------------- #
+# ------------------------------
+# Shiny Server
+# ------------------------------
 def server(input, output, session):
 
-    @reactive.Calc
-    def compound_df():
-        if input.run_btn() == 0:
-            return pd.DataFrame(columns=["Group", "Allele", "MeanMFI"])
-        
-        compound_input = input.compound()
-        smiles = LOCAL_COMPOUNDS.get(compound_input.lower(), compound_input)
-        df = calculate_mfi(smiles)
-        return df[df["MeanMFI"] > 1000]
+    # Reactive value to store results
+    results_df = reactive.Value(pd.DataFrame())
 
+    @input.run_btn
+    def fetch_results():
+        chem_name = input.chemical_name()
+        if not chem_name:
+            results_df.set(pd.DataFrame())
+            return
+
+        chem_name_lower = chem_name.lower()
+        # Lookup local compound
+        smiles = LOCAL_COMPOUNDS.get(chem_name_lower)
+        if smiles:
+            # Dummy MFI prediction values for demonstration
+            df = pd.DataFrame({
+                "Chemical": [chem_name],
+                "SMILES": [smiles],
+                "Predicted_MFI": [round(len(smiles) * 1234)]  # just an example formula
+            })
+        else:
+            # If chemical not found, fallback
+            df = pd.DataFrame({
+                "Chemical": [chem_name],
+                "SMILES": ["Not Found"],
+                "Predicted_MFI": [None]
+            })
+        results_df.set(df)
+
+    # Status / messages
+    @output
+    @render.text
+    def status_text():
+        df = results_df.get()
+        if df.empty:
+            return "Enter a chemical name and click Run."
+        return f"Showing results for {input.chemical_name()}"
+
+    # Result table
     @output
     @render.table
-    def mfi_table():
-        df = compound_df()
-        return df
+    def result_table():
+        return results_df.get()
 
-# ---------------- Run App ---------------- #
+
+# ------------------------------
+# Create Shiny App
+# ------------------------------
 app = App(app_ui, server)
