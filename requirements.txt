@@ -3,3 +3,4 @@ pandas
 requests
 scikit-learn
 joblib
+chembl_webresource_client
