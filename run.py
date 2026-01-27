@@ -1,79 +1,80 @@
-import streamlit as st
 import subprocess
 import sys
+import importlib
 
 # -----------------------------
-# Automatic package installer
+# Function to install packages
 # -----------------------------
-def install(package):
+def install_package(pkg):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", pkg])
+
+# -----------------------------
+# Required packages
+# -----------------------------
+required_packages = [
+    "streamlit",
+    "pandas",
+    "rdkit-pypi",
+    "chembl-webresource-client",
+]
+
+# -----------------------------
+# Ensure packages are installed
+# -----------------------------
+for pkg in required_packages:
     try:
-        __import__(package)
+        importlib.import_module(pkg.split("-")[0])
     except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Install required packages if missing
-for pkg in ["rdkit", "pandas", "numpy", "scikit_learn", "chembl_webresource_client", "requests"]:
-    install(pkg)
+        install_package(pkg)
 
 # -----------------------------
-# Imports (after install)
+# Imports (after ensuring install)
 # -----------------------------
+import streamlit as st
 import pandas as pd
-import requests
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Draw
+from rdkit.Chem import Draw
 from chembl_webresource_client.new_client import new_client
-from PIL import Image
 from io import BytesIO
+from PIL import Image
 
 # -----------------------------
-# Streamlit App UI
+# Streamlit app
 # -----------------------------
-st.set_page_config(page_title="Chemical Info Finder", layout="centered")
-st.title("🔬 Chemical Info Finder")
+st.set_page_config(page_title="Chemical Structure Viewer", layout="centered")
 
-st.write("Enter a chemical name to fetch its SMILES and properties from ChEMBL:")
+st.title("🧪 Chemical Structure Viewer")
+st.write("Enter a chemical name to fetch its SMILES and display the structure.")
 
-# Input field
-chemical_name = st.text_input("Chemical Name", "")
+# User input
+chem_name = st.text_input("Chemical Name", placeholder="e.g., Aspirin")
 
-if st.button("Search") and chemical_name.strip():
-    st.info(f"Searching for '{chemical_name}'...")
-
-    # Fetch compound from ChEMBL
-    molecule = new_client.molecule
-    res = molecule.filter(pref_name__icontains=chemical_name).only(["molecule_chembl_id", "pref_name", "molecule_structures"]).first()
-
-    if not res:
-        st.error("❌ Chemical not found in ChEMBL.")
+if st.button("Search"):
+    if not chem_name.strip():
+        st.warning("Please enter a chemical name!")
     else:
-        st.success("✅ Chemical found!")
+        with st.spinner("Fetching chemical information..."):
+            try:
+                # Search ChEMBL for the molecule
+                molecule = new_client.molecule
+                res = molecule.filter(pref_name__icontains=chem_name).only(["molecule_chembl_id", "pref_name", "molecule_structures"]).first()
+                
+                if not res:
+                    st.error(f"No molecule found for '{chem_name}'.")
+                else:
+                    smiles = res.get("molecule_structures", {}).get("canonical_smiles")
+                    chembl_id = res.get("molecule_chembl_id")
+                    pref_name = res.get("pref_name")
+                    
+                    if not smiles:
+                        st.error(f"SMILES not available for '{pref_name}'.")
+                    else:
+                        st.success(f"Found molecule: **{pref_name}** (ChEMBL ID: {chembl_id})")
+                        st.write(f"**SMILES:** `{smiles}`")
 
-        chembl_id = res["molecule_chembl_id"]
-        name = res.get("pref_name", "N/A")
-        smiles = res.get("molecule_structures", {}).get("canonical_smiles", "")
-
-        st.write(f"**ChEMBL ID:** {chembl_id}")
-        st.write(f"**Name:** {name}")
-        st.write(f"**SMILES:** `{smiles}`")
-
-        # Show molecule image
-        if smiles:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol:
-                img = Draw.MolToImage(mol, size=(300, 300))
-                st.image(img, caption=name)
-
-        # Compute basic properties
-        if smiles:
-            mol = Chem.MolFromSmiles(smiles)
-            mw = Descriptors.MolWt(mol)
-            logp = Descriptors.MolLogP(mol)
-            hba = Descriptors.NumHAcceptors(mol)
-            hbd = Descriptors.NumHDonors(mol)
-
-            st.write("### Properties")
-            st.write(f"- Molecular Weight: {mw:.2f}")
-            st.write(f"- LogP: {logp:.2f}")
-            st.write(f"- H-Bond Acceptors: {hba}")
-            st.write(f"- H-Bond Donors: {hbd}")
+                        # Draw molecule
+                        mol = Chem.MolFromSmiles(smiles)
+                        img = Draw.MolToImage(mol, size=(400, 400))
+                        st.image(img, caption=f"{pref_name} Structure", use_column_width=False)
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
