@@ -1,42 +1,21 @@
-import os
-import time
+import streamlit as st
 import math
-import warnings
 import requests
 import pandas as pd
-import joblib
+from rdkit import Chem, RDLogger
+from rdkit.Chem import Descriptors, Draw
+from chembl_webresource_client.new_client import new_client
 from sklearn.metrics import r2_score
-from sklearn.exceptions import InconsistentVersionWarning
+import joblib
+import warnings
+import os
+import time
 
-# ----------------- Streamlit Configuration -----------------
-# Must be set BEFORE importing streamlit
-os.environ["STREAMLIT_SERVER_HEADLESS"] = "true"
-os.environ["STREAMLIT_SERVER_PORT"] = os.environ.get("PORT", "8501")
-os.environ["STREAMLIT_SERVER_ENABLECORS"] = "false"
-
-import streamlit as st
-
-# ----------------- RDKit Imports -----------------
-try:
-    from rdkit import Chem, RDLogger
-    from rdkit.Chem import Descriptors, Draw
-    RDLogger.DisableLog('rdApp.*')
-    RDKit_AVAILABLE = True
-except ImportError:
-    RDKit_AVAILABLE = False
-
-# ----------------- Chembl Client -----------------
-try:
-    from chembl_webresource_client.new_client import new_client
-except ImportError:
-    new_client = None
-
-# ----------------- Warnings -----------------
-warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+warnings.filterwarnings("ignore")
+RDLogger.DisableLog('rdApp.*')
 
 # ---------------- CONFIG ---------------- #
-BASE_DIR = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(BASE_DIR, "random_forest_model.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 
 # ---------------- Local Fallback Compounds ---------------- #
 LOCAL_COMPOUNDS = {
@@ -46,13 +25,10 @@ LOCAL_COMPOUNDS = {
 }
 
 # ---------------- Utility Functions ---------------- #
-
 def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
 
 def is_smiles(s):
-    if not RDKit_AVAILABLE:
-        return False
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
@@ -107,6 +83,7 @@ def process_input(user_input):
     user_input = user_input.strip().replace(" ", "")
     chembl_id, smiles, compound_name = None, None, None
 
+    # Local fallback
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
         compound_name = user_input
@@ -133,64 +110,28 @@ def process_input(user_input):
     descriptors["smiles"] = smiles
     return descriptors, chembl_id, compound_name
 
-# ---------------- Experimental IC50 ---------------- #
-
-def get_top_ic50_values(chembl_id, top_n=3):
-    if not chembl_id or new_client is None:
-        return []
-    activity = new_client.activity
-    target_client = new_client.target
-    try:
-        res = activity.filter(molecule_chembl_id=chembl_id, standard_type="IC50")
-    except Exception:
-        return []
-    valid = []
-    for entry in res:
-        val = entry.get('standard_value')
-        units = entry.get('standard_units')
-        pchembl = entry.get('pchembl_value')
-        if val is None or units is None or pchembl is None:
-            continue
-        try:
-            val_num = float(val)
-            log10_val = math.log10(val_num) if val_num > 0 else None
-        except:
-            log10_val = None
-        target_name = "Unknown"
-        tid = entry.get('target_chembl_id')
-        if tid:
-            try:
-                target_data = target_client.get(tid)
-                target_name = target_data.get('pref_name') or "Unknown"
-            except:
-                pass
-        valid.append({
-            'chembl_id': chembl_id,
-            'ic50_value': val,
-            'units': units,
-            'pchembl_value': pchembl,
-            'log10_ic50': log10_val,
-            'target_name': target_name,
-            'target_id': tid
-        })
-    valid.sort(key=lambda x: x['pchembl_value'], reverse=True)
-    return valid[:top_n]
-
 # ---------------- Prediction ---------------- #
-
 def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
-    cols_to_drop = ['NumRadicalElectrons','SMR_VSA8','SlogP_VSA9','chembl_id','smiles']
-    df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
+    drop_cols = ['chembl_id', 'smiles']
+    df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
+
     saved = joblib.load(model_path)
     model, scaler = saved["model"], saved["scaler"]
     X_scaled = scaler.transform(df)
     log_pred = model.predict(X_scaled)[0]
-    confidence = saved.get("r2", None)
+
+    confidence = None
+    if "r2" in saved:
+        confidence = saved["r2"]
+    elif "X_train" in saved and "y_train" in saved:
+        X_train_scaled = scaler.transform(saved["X_train"])
+        y_train_pred = model.predict(X_train_scaled)
+        confidence = r2_score(saved["y_train"], y_train_pred)
+
     return log_pred, confidence
 
-# ---------------- Streamlit UI ---------------- #
-
+# ---------------- Streamlit Interface ---------------- #
 st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
 st.title("⚗️ PPIM-IC50Pred Webserver")
 
@@ -198,6 +139,7 @@ user_input = st.text_input("Enter chemical name, ChEMBL ID, or SMILES:")
 
 if user_input:
     descriptors, chembl_id, compound_name = process_input(user_input)
+
     if descriptors:
         st.subheader("Compound Details")
         st.markdown(f"**Compound Name:** {compound_name or 'Unknown'}")
@@ -205,36 +147,18 @@ if user_input:
         st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
         # 2D Structure
-        st.subheader("2D Structure Visualization")
+        st.subheader("2D Structure")
         mol = Chem.MolFromSmiles(descriptors['smiles'])
         if mol:
             img = Draw.MolToImage(mol, size=(300, 300))
-            st.image(img, caption=f"{compound_name or chembl_id}", use_column_width=False)
+            st.image(img, caption=compound_name or chembl_id)
         else:
             st.warning("Could not render molecular structure.")
 
         # Prediction
-        st.subheader("Prediction Details")
+        st.subheader("Predicted log(IC50) [nM]")
         log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-        st.markdown(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
-        if conf:
-            st.markdown(f"**Model Confidence (R²):** {conf:.4f} ({conf*100:.2f}%)")
+        st.markdown(f"**Predicted:** {log_val:.4f}")
+        if conf is not None:
+            st.markdown(f"**Model Confidence (R²):** {conf:.4f}")
 
-        # Experimental IC50
-        exp_entries = get_top_ic50_values(chembl_id, top_n=3)
-        if exp_entries:
-            st.subheader("Experimental IC50 Values from ChEMBL")
-            for i, e in enumerate(exp_entries, 1):
-                exp_log_ic50 = float(e['log10_ic50'])
-                diff_val = log_val - exp_log_ic50
-                perc_diff = (diff_val / exp_log_ic50 * 100) if exp_log_ic50 != 0 else 0
-                st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-                st.markdown(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
-                st.markdown(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
-                st.markdown(f"- log(IC50): {exp_log_ic50:.4f}")
-                st.markdown(f"- 🔄 Difference: {diff_val:.4f} nM ({perc_diff:.2f}%)")
-        else:
-            if chembl_id:
-                st.warning("No experimental IC50 values found in ChEMBL.")
-            else:
-                st.info("Experimental IC50 data not available for local compounds.")
