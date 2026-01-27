@@ -137,10 +137,12 @@ def get_top_ic50_values(chembl_id, top_n=3):
         return []
     activity = new_client.activity
     target_client = new_client.target
+
     try:
         res = activity.filter(molecule_chembl_id=chembl_id, standard_type="IC50")
     except Exception:
         return []
+
     valid = []
     for entry in res:
         pchembl = entry.get("pchembl_value")
@@ -148,11 +150,13 @@ def get_top_ic50_values(chembl_id, top_n=3):
         units = entry.get("standard_units")
         if pchembl is None or val is None or units is None:
             continue
+
         try:
             val_num = float(val)
             log10_val = math.log10(val_num) if val_num > 0 else None
         except Exception:
             log10_val = None
+
         target_name = "Unknown"
         tid = entry.get("target_chembl_id")
         if tid:
@@ -161,6 +165,7 @@ def get_top_ic50_values(chembl_id, top_n=3):
                 target_name = target_data.get("pref_name") or "Unknown"
             except Exception:
                 pass
+
         valid.append(
             {
                 "chembl_id": chembl_id,
@@ -172,13 +177,68 @@ def get_top_ic50_values(chembl_id, top_n=3):
                 "target_id": tid,
             }
         )
+
     valid.sort(key=lambda x: x["pchembl_value"], reverse=True)
     return valid[:top_n]
+
+# ---------------- Target Information (Table) ---------------- #
+
+def get_target_info_table(chembl_id):
+    """
+    Fetch target information (type, organism, mechanism, etc.) for a molecule
+    and return as a list of dicts suitable for a table.
+    """
+    if not chembl_id:
+        return []
+
+    mechanism_client = new_client.mechanism
+    target_client = new_client.target
+
+    try:
+        mechs = mechanism_client.filter(molecule_chembl_id=chembl_id)
+    except Exception:
+        return []
+
+    rows = []
+    for m in mechs:
+        t_id = m.get("target_chembl_id")
+        mechanism = m.get("mechanism_of_action")
+        action_type = m.get("action_type")
+        refs = m.get("mechanism_refs", [])
+
+        target_type = None
+        organism = None
+
+        if t_id:
+            try:
+                tdata = target_client.get(t_id)
+                target_type = tdata.get("target_type")
+                organism = tdata.get("organism")
+            except Exception:
+                pass
+
+        ref_source = None
+        if isinstance(refs, list) and refs:
+            ref_source = refs[0].get("ref_type")
+
+        rows.append(
+            {
+                "Target ChEMBL ID": t_id or "NA",
+                "Target Type": target_type or "NA",
+                "Organism": organism or "NA",
+                "Mechanism": mechanism or "NA",
+                "Action Type": action_type or "NA",
+                "Ref Source": ref_source or "NA",
+            }
+        )
+
+    return rows
 
 # ---------------- Prediction ---------------- #
 
 def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
+
     cols_to_drop = [
         "NumRadicalElectrons",
         "SMR_VSA8",
@@ -205,10 +265,12 @@ def predict_ic50(descriptor_dict, model_path):
         "chembl_id",
         "smiles",
     ]
+
     df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
     saved = joblib.load(model_path)
     model, scaler = saved["model"], saved["scaler"]
+
     X_scaled = scaler.transform(df)
     log_pred = model.predict(X_scaled)[0]
 
@@ -225,7 +287,7 @@ def predict_ic50(descriptor_dict, model_path):
 
     return log_pred, confidence
 
-# ---------------- Streamlit Layout (PubChem‑style, Responsive) ---------------- #
+# ---------------- Streamlit Layout (PubChem‑style, no outer rectangle) ---------------- #
 
 st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 
@@ -234,11 +296,6 @@ st.markdown(
     <style>
     body {
         background-color: #f5f6fa;
-    }
-    .pc-main {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 1.5rem 1rem 3rem 1rem;
     }
     .pc-header-title {
         font-size: 2.0rem;
@@ -252,14 +309,14 @@ st.markdown(
         margin-bottom: 1.2rem;
         text-align: left;
     }
-    .pc-card {
+    .pc-section {
         background-color: #ffffff;
         border-radius: 8px;
         padding: 1.1rem 1.2rem;
         margin-bottom: 1rem;
         box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
     }
-    .pc-card-title {
+    .pc-section-title {
         font-weight: 600;
         margin-bottom: 0.6rem;
         font-size: 1.05rem;
@@ -282,18 +339,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("<div class='pc-main'>", unsafe_allow_html=True)
+# Small blank spacer instead of outer rectangle
+st.markdown("&nbsp;", unsafe_allow_html=True)
 
-# Header (PubChem‑like)
+# Header
 st.markdown("<div class='pc-header-title'>PPIM‑IC50Pred</div>", unsafe_allow_html=True)
 st.markdown(
     "<div class='pc-header-subtitle'>IC50 prediction server for small molecules</div>",
     unsafe_allow_html=True,
 )
 
-# Search card
-st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-st.markdown("<div class='pc-card-title'>Search compound</div>", unsafe_allow_html=True)
+# Search section
+st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
+st.markdown("<div class='pc-section-title'>Search compound</div>", unsafe_allow_html=True)
 user_input = st.text_input(
     "Enter chemical name, ChEMBL ID, or SMILES:",
     placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
@@ -305,9 +363,9 @@ if user_input:
 
     # Not found → suggestions + PubMed
     if descriptors is None:
-        st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='pc-card-title'>Compound not found in ChEMBL</div>",
+            "<div class='pc-section-title'>Compound not found in ChEMBL</div>",
             unsafe_allow_html=True,
         )
         st.write(
@@ -327,20 +385,19 @@ if user_input:
             f"[Search PubMed for **{user_input}**](https://pubmed.ncbi.nlm.nih.gov/?term={user_input})"
         )
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
         st.stop()
 
     # Compound summary
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-card-title'>Compound summary</div>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section-title'>Compound summary</div>", unsafe_allow_html=True)
     st.markdown(f"**Name:** {compound_name if compound_name else 'Unknown'}")
     st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
     st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
     st.markdown("</div>", unsafe_allow_html=True)
 
     # 2D structure
-    st.markdown("<div class='pc-card pc-structure-img'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-card-title'>2D structure</div>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section pc-structure-img'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section-title'>2D structure</div>", unsafe_allow_html=True)
     mol = Chem.MolFromSmiles(descriptors["smiles"])
     if mol:
         img = Draw.MolToImage(mol, size=(260, 260))
@@ -349,9 +406,9 @@ if user_input:
         st.info("Could not render molecular structure.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Predicted IC50 (main focus)
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-card-title'>Predicted IC50</div>", unsafe_allow_html=True)
+    # Predicted IC50
+    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section-title'>Predicted IC50</div>", unsafe_allow_html=True)
     log_val, conf = predict_ic50(descriptors, MODEL_PATH)
     st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
 
@@ -373,9 +430,9 @@ if user_input:
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Experimental IC50
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='pc-card-title'>Experimental IC50 data (ChEMBL)</div>",
+        "<div class='pc-section-title'>Experimental IC50 data (ChEMBL)</div>",
         unsafe_allow_html=True,
     )
     exp_entries = get_top_ic50_values(chembl_id, top_n=3)
@@ -392,9 +449,23 @@ if user_input:
         st.info("No experimental IC50 values found in ChEMBL for this compound.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # PubChem / PubMed links
-    st.markdown("<div class='pc-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-card-title'>External resources</div>", unsafe_allow_html=True)
+    # Target information table
+    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='pc-section-title'>Target information (ChEMBL)</div>",
+        unsafe_allow_html=True,
+    )
+    target_rows = get_target_info_table(chembl_id)
+    if target_rows:
+        df_targets = pd.DataFrame(target_rows)
+        st.table(df_targets)
+    else:
+        st.info("No target information available for this compound in ChEMBL.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # External resources
+    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
+    st.markdown("<div class='pc-section-title'>External resources</div>", unsafe_allow_html=True)
 
     query_name = compound_name if compound_name else descriptors["smiles"]
     st.markdown(
@@ -406,5 +477,3 @@ if user_input:
         f"[Open](https://pubmed.ncbi.nlm.nih.gov/?term={query_name})"
     )
     st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
