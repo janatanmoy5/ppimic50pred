@@ -10,7 +10,7 @@ chembl-webresource-client
 # Standard scientific stack
 pandas
 numpy
-scikit-learn=
+scikit-learn
 joblib
 requests
 
