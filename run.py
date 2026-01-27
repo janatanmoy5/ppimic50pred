@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 # ================= RDKit =================
 try:
     from rdkit import Chem, RDLogger
-    from rdkit.Chem import Descriptors, Draw
+    from rdkit.Chem import Descriptors
     RDLogger.DisableLog("rdApp.*")
     RDKit_AVAILABLE = True
 except Exception:
@@ -79,9 +79,11 @@ def compute_descriptors(smiles):
     if not RDKit_AVAILABLE:
         st.error("RDKit is not available in this environment.")
         return None
+
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
+
     desc = {}
     for name, fn in Descriptors.descList:
         try:
@@ -97,21 +99,14 @@ def process_input(user_input):
     chembl_id = None
     cname = None
 
-    # Local dictionary
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
         cname = user_input
-
-    # ChEMBL ID
     elif is_chembl_id(user_input):
         chembl_id = user_input.upper()
         smiles = chembl_id_to_smiles(chembl_id)
-
-    # SMILES
     elif is_valid_smiles(user_input):
         smiles = user_input
-
-    # Name search
     else:
         chembl_id, smiles = chembl_name_to_smiles(user_input)
         cname = user_input
@@ -127,7 +122,6 @@ def process_input(user_input):
 
     desc["smiles"] = smiles
     desc["chembl_id"] = chembl_id
-
     return desc, chembl_id, cname
 
 # ================= EXPERIMENTAL DATA =================
@@ -152,7 +146,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
             log_val = math.log10(val) if val > 0 else None
         except Exception:
             continue
-
         rows.append({
             "IC50": val,
             "Units": a.get("standard_units"),
@@ -160,24 +153,26 @@ def get_top_ic50_values(chembl_id, top_n=3):
             "log(IC50)": log_val,
             "Target": a.get("target_chembl_id")
         })
-
     rows.sort(key=lambda x: x["pChEMBL"] or 0, reverse=True)
     return rows[:top_n]
 
 # ================= PREDICTION =================
 def predict_ic50(desc):
     df = pd.DataFrame([desc])
-
     saved = joblib.load(MODEL_PATH)
     model = saved["model"]
     scaler = saved["scaler"]
 
-    # Keep only features the model expects
-    model_features = saved.get("features", df.columns.tolist())
-    df = df.reindex(columns=model_features, fill_value=0.0)
+    # Use features from training
+    feature_names = saved.get("features", df.columns.tolist())
 
-    X = scaler.transform(df)
-    log_pred = model.predict(X)[0]
+    # Keep only features the model expects
+    X = pd.DataFrame()
+    for f in feature_names:
+        X[f] = df.get(f, pd.Series([0.0]))
+
+    X_scaled = scaler.transform(X)
+    log_pred = model.predict(X_scaled)[0]
 
     r2 = saved.get("r2", None)
     if r2 is None and "X_train" in saved:
@@ -191,7 +186,7 @@ st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
 st.title("⚗️ PPIM-IC50Pred")
 
 if not RDKit_AVAILABLE:
-    st.error("RDKit is not available. This app cannot run.")
+    st.error("RDKit is not available. Please use Python 3.12 or 3.11 for deployment.")
     st.stop()
 
 user_input = st.text_input(
@@ -203,29 +198,20 @@ if user_input:
     desc, chembl_id, cname = process_input(user_input)
 
     if desc:
-        st.subheader("Compound Information")
+        st.subheader("Compound Info")
         st.write("**Name:**", cname or "Unknown")
         st.write("**ChEMBL ID:**", chembl_id or "N/A")
         st.write("**SMILES:**", desc["smiles"])
 
-        # Show 2D structure
-        if RDKit_AVAILABLE:
-            mol = Chem.MolFromSmiles(desc["smiles"])
-            if mol:
-                st.subheader("2D Structure")
-                st.image(Draw.MolToImage(mol, size=(300, 300)))
-
-        # Prediction
         log_ic50, r2 = predict_ic50(desc)
         st.subheader("Prediction")
-        st.success(f"Predicted log(IC50) [nM]: **{log_ic50:.4f}**")
+        st.success(f"Predicted log(IC50): **{log_ic50:.4f}**")
         if r2:
             st.caption(f"Model R²: {r2:.3f}")
 
-        # Experimental data
-        exp = get_top_ic50_values(chembl_id) if chembl_id else []
+        exp = get_top_ic50_values(chembl_id)
         if exp:
             st.subheader("Experimental IC50 (ChEMBL)")
             st.dataframe(pd.DataFrame(exp))
         else:
-            st.info("Experimental IC50 data not available for local compounds.")
+            st.info("No experimental IC50 data found.")
