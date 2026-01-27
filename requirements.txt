@@ -3,6 +3,6 @@ pandas>=2.2.3,<2.3
 numpy>=1.26.0,<1.27
 scikit-learn>=1.4.2,<1.5
 rdkit-pypi>=2025.3.5
-requests
 chembl-webresource-client
 joblib
+requests
