@@ -1,5 +1,5 @@
-streamlit==1.25.0
 rdkit-pypi==2023.9.2
+streamlit==1.25.0
 pandas
 numpy
 scikit-learn
