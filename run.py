@@ -1,73 +1,86 @@
-# run.py
 import streamlit as st
 import pandas as pd
+from chembl_webresource_client.new_client import new_client
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-from chembl_webresource_client.new_client import new_client
-import os
 import joblib
+import os
 
-# ---------------- CONFIG ---------------- #
-MODEL_PATH = "random_forest_model.pkl"
-
-st.set_page_config(page_title="Chemical Activity Predictor", layout="wide")
+st.set_page_config(page_title="Chemical Activity Predictor", layout="centered")
 st.title("💊 Chemical Activity Predictor")
 
-# ---------------- LOAD MODEL ---------------- #
-model = None
-if os.path.exists(MODEL_PATH):
-    try:
+# ---------------- ML Model ---------------- #
+MODEL_PATH = "ml_model.pkl"  # Replace with your trained model path
+
+def load_model():
+    if os.path.exists(MODEL_PATH):
         model = joblib.load(MODEL_PATH)
-        st.success(f"✅ ML model loaded (type: {type(model)})")
-    except Exception as e:
-        st.warning(f"⚠ Model could not be loaded: {e}")
-else:
-    st.info("⚠ Model file not found. Prediction disabled.")
-
-# ---------------- USER INPUT ---------------- #
-chem_name = st.text_input("Enter a chemical name to fetch details and predict activity.")
-search_button = st.button("Search")
-
-if search_button and chem_name:
-    chembl = new_client.molecule
-    res = chembl.filter(pref_name__iexact=chem_name).only("molecule_chembl_id", "pref_name", "molecule_structures").first()
-    
-    if res:
-        chembl_id = res.get("molecule_chembl_id", "N/A")
-        smiles = res.get("molecule_structures", {}).get("canonical_smiles", "N/A")
-        st.subheader(f"Found: {chem_name.upper()}")
-        st.write(f"**ChEMBL ID:** {chembl_id}")
-        st.write(f"**SMILES:** {smiles}")
-
-        # ---------------- MOLECULAR PROPERTIES ---------------- #
-        mol = Chem.MolFromSmiles(smiles)
-        if mol:
-            mw = Descriptors.MolWt(mol)
-            alogp = Descriptors.MolLogP(mol)
-            psa = Descriptors.TPSA(mol)
-
-            df_props = pd.DataFrame({
-                "Property": ["Molecular Weight", "AlogP", "Polar Surface Area"],
-                "Value": [mw, alogp, psa]
-            })
-            st.subheader("Molecular Properties (RDKit)")
-            st.table(df_props)
-
-            # ---------------- PREDICTION ---------------- #
-            if model and hasattr(model, "predict"):
-                try:
-                    features = [[mw, alogp, psa]]
-                    prediction = model.predict(features)[0]
-                    st.subheader("📈 Predicted Activity (IC50)")
-                    st.success(f"{prediction:.4f}")
-                except Exception as e:
-                    st.warning(f"Prediction failed: {e}")
-            else:
-                if not model:
-                    st.info("Prediction unavailable: model missing.")
-                else:
-                    st.info(f"Prediction unavailable: loaded object is not a model (type: {type(model)})")
-        else:
-            st.warning("Invalid SMILES. Cannot compute molecular properties.")
+        st.success("✅ ML model loaded")
+        return model
     else:
-        st.error(f"No results found for '{chem_name}'.")
+        st.warning("⚠️ ML model not found, predictions will be random")
+        return None
+
+model = load_model()
+
+# ---------------- Helper Functions ---------------- #
+def fetch_chembl_info(chemical_name):
+    molecule = new_client.molecule
+    res = molecule.filter(pref_name__iexact=chemical_name).only(
+        ["molecule_chembl_id", "pref_name", "molecule_structures"]
+    )
+    if res:
+        chembl_id = res[0]["molecule_chembl_id"]
+        smiles = res[0]["molecule_structures"]["canonical_smiles"]
+        return chembl_id, smiles
+    else:
+        return None, None
+
+def compute_descriptors(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    descriptors = {
+        "MolecularWeight": Descriptors.MolWt(mol),
+        "AlogP": Descriptors.MolLogP(mol),
+        "TPSA": Descriptors.TPSA(mol),
+        "NumHAcceptors": Descriptors.NumHAcceptors(mol),
+        "NumHDonors": Descriptors.NumHDonors(mol)
+    }
+    return descriptors
+
+# ---------------- Streamlit UI ---------------- #
+chemical_name = st.text_input("Enter a chemical name", "")
+
+if st.button("Search"):
+    if chemical_name.strip() == "":
+        st.warning("Please enter a chemical name")
+    else:
+        chembl_id, smiles = fetch_chembl_info(chemical_name.strip())
+        if chembl_id is None:
+            st.error("❌ Chemical not found in ChEMBL")
+        else:
+            st.success(f"Found: {chemical_name.upper()}")
+            st.write(f"**ChEMBL ID:** {chembl_id}")
+            st.write(f"**SMILES:** {smiles}")
+
+            # Compute molecular descriptors
+            desc = compute_descriptors(smiles)
+            if desc:
+                st.subheader("Molecular Properties (RDKit)")
+                df = pd.DataFrame(desc, index=[0])
+                st.dataframe(df)
+            else:
+                st.warning("Could not compute molecular descriptors")
+
+            # Predict activity
+            if model:
+                try:
+                    input_df = pd.DataFrame(desc, index=[0])
+                    prediction = model.predict(input_df)[0]
+                    st.subheader("Predicted Activity")
+                    st.write(f"🔹 Activity Score: {prediction:.3f}")
+                except Exception as e:
+                    st.error(f"Prediction failed: {e}")
+            else:
+                st.info("Prediction skipped: no ML model loaded")
