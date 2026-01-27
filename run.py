@@ -1,78 +1,85 @@
-# run.py
 import streamlit as st
-import pandas as pd
-import numpy as np
 from rdkit import Chem
-from rdkit.Chem import Descriptors
-from chembl_webresource_client.new_client import new_client
-from sklearn.ensemble import RandomForestRegressor
+from rdkit.Chem import Draw
+import pandas as pd
 import joblib
 import os
 
+# ---------------- Page config ---------------- #
 st.set_page_config(
     page_title="PPI MIC50 Predictor",
     layout="wide"
 )
 
-st.title("PPI MIC50 Prediction")
+st.title("🔬 PPI MIC50 Prediction App")
+st.markdown("Predict MIC50 values from SMILES input. Enter SMILES below.")
 
-# ---------------- CONFIG ---------------- #
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
+# ---------------- Sidebar ---------------- #
+st.sidebar.header("Input SMILES")
+smiles_input = st.sidebar.text_area(
+    "Enter one SMILES per line:",
+    height=150
+)
+smiles_list = [s.strip() for s in smiles_input.split("\n") if s.strip()]
 
-# ---------------- Local fallback compounds ---------------- #
-LOCAL_COMPOUNDS = {
-    "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
-    "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
-    "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
-}
+# ---------------- Load model ---------------- #
+MODEL_PATH = "random_forest_model.pkl"
+if os.path.exists(MODEL_PATH):
+    model = joblib.load(MODEL_PATH)
+else:
+    model = None
+    st.warning("⚠️ Random Forest model not found. Predictions will not run.")
 
-# ---------------- Functions ---------------- #
-def compute_descriptors(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    desc = {
+# ---------------- Descriptor function ---------------- #
+def calculate_descriptors(mol):
+    """
+    Simple RDKit descriptors for demonstration
+    """
+    from rdkit.Chem import Descriptors
+    return {
         "MolWt": Descriptors.MolWt(mol),
-        "LogP": Descriptors.MolLogP(mol),
+        "NumHAcceptors": Descriptors.NumHAcceptors(mol),
         "NumHDonors": Descriptors.NumHDonors(mol),
-        "NumHAcceptors": Descriptors.NumHAcceptors(mol)
+        "TPSA": Descriptors.TPSA(mol),
+        "NumRotatableBonds": Descriptors.NumRotatableBonds(mol)
     }
-    return pd.DataFrame([desc])
 
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        return joblib.load(MODEL_PATH)
-    return None
-
-def predict_mic50(model, descriptors_df):
-    if model is None or descriptors_df is None:
+# ---------------- Prediction function ---------------- #
+def predict_activity(descriptors):
+    """
+    Predict MIC50 using the loaded model
+    """
+    if model is None:
         return None
-    return model.predict(descriptors_df)[0]
+    df = pd.DataFrame([descriptors])
+    pred = model.predict(df)
+    return pred[0]
 
-# ---------------- UI ---------------- #
-compound_name = st.selectbox(
-    "Select a compound:",
-    options=list(LOCAL_COMPOUNDS.keys())
-)
+# ---------------- Main App ---------------- #
+if smiles_list:
+    for idx, smi in enumerate(smiles_list, 1):
+        st.markdown(f"### Compound {idx}")
+        mol = Chem.MolFromSmiles(smi)
+        if mol is None:
+            st.error(f"❌ Invalid SMILES: {smi}")
+            continue
 
-smiles_input = st.text_input(
-    "Or enter a SMILES string manually:",
-    value=LOCAL_COMPOUNDS.get(compound_name, "")
-)
+        st.success(f"✅ Valid SMILES: {smi}")
 
-if st.button("Predict MIC50"):
-    if not smiles_input:
-        st.error("Please provide a SMILES string.")
-    else:
-        descriptors_df = compute_descriptors(smiles_input)
-        if descriptors_df is None:
-            st.error("Invalid SMILES string.")
+        # Draw molecule
+        st.image(Draw.MolToImage(mol, size=(300, 300)))
+
+        # Calculate descriptors
+        desc = calculate_descriptors(mol)
+        st.write("**Descriptors:**")
+        st.json(desc)
+
+        # Predict MIC50
+        pred = predict_activity(desc)
+        if pred is not None:
+            st.metric("Predicted MIC50", f"{pred:.4f}")
         else:
-            model = load_model()
-            mic50_pred = predict_mic50(model, descriptors_df)
-            if mic50_pred is not None:
-                st.success(f"Predicted MIC50: {mic50_pred:.3f} μM")
-                st.write("Molecular Descriptors:")
-                st.dataframe(descriptors_df)
-            else:
-                st.warning("Model not found. Please upload your trained model as 'random_forest_model.pkl'.")
+            st.info("Model not loaded. Cannot predict MIC50.")
+
+else:
+    st.info("Enter SMILES in the sidebar to start predictions.")
