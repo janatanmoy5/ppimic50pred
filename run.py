@@ -1,80 +1,84 @@
-import subprocess
-import sys
-import importlib
-
-# -----------------------------
-# Function to install packages
-# -----------------------------
-def install_package(pkg):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", pkg])
-
-# -----------------------------
-# Required packages
-# -----------------------------
-required_packages = [
-    "streamlit",
-    "pandas",
-    "rdkit-pypi",
-    "chembl-webresource-client",
-]
-
-# -----------------------------
-# Ensure packages are installed
-# -----------------------------
-for pkg in required_packages:
-    try:
-        importlib.import_module(pkg.split("-")[0])
-    except ImportError:
-        install_package(pkg)
-
-# -----------------------------
-# Imports (after ensuring install)
-# -----------------------------
 import streamlit as st
+import requests
 import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import Draw
-from chembl_webresource_client.new_client import new_client
-from io import BytesIO
-from PIL import Image
+import joblib
+import os
 
-# -----------------------------
-# Streamlit app
-# -----------------------------
-st.set_page_config(page_title="Chemical Structure Viewer", layout="centered")
+# ---------------- CONFIG ---------------- #
+MODEL_PATH = "model.pkl"   # Make sure your model file is in the repo
 
-st.title("🧪 Chemical Structure Viewer")
-st.write("Enter a chemical name to fetch its SMILES and display the structure.")
+st.set_page_config(page_title="PPI IC50 Predictor", layout="centered")
+st.title("🧪 PPI IC50 Prediction App")
+st.write("Enter a chemical name to fetch molecular features from ChEMBL and predict activity.")
 
-# User input
-chem_name = st.text_input("Chemical Name", placeholder="e.g., Aspirin")
+# ---------------- LOAD MODEL ---------------- #
+@st.cache_resource
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        return joblib.load(MODEL_PATH)
+    return None
 
-if st.button("Search"):
-    if not chem_name.strip():
-        st.warning("Please enter a chemical name!")
+model = load_model()
+
+# ---------------- FETCH DATA FROM CHEMBL ---------------- #
+def get_chembl_features(chem_name):
+    search_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={chem_name}&format=json"
+    res = requests.get(search_url)
+
+    if res.status_code != 200:
+        return None, "ChEMBL API error"
+
+    data = res.json()
+    if not data["molecules"]:
+        return None, "No molecule found"
+
+    mol = data["molecules"][0]
+    props = mol.get("molecule_properties")
+
+    if not props:
+        return None, "No molecular properties available"
+
+    try:
+        features = {
+            "alogp": float(props.get("alogp", 0)),
+            "full_mwt": float(props.get("full_mwt", 0)),
+            "hba": float(props.get("hba", 0)),
+            "hbd": float(props.get("hbd", 0)),
+            "psa": float(props.get("psa", 0)),
+            "rtb": float(props.get("rtb", 0)),
+            "aromatic_rings": float(props.get("aromatic_rings", 0)),
+            "heavy_atoms": float(props.get("heavy_atoms", 0)),
+        }
+    except:
+        return None, "Error parsing molecular properties"
+
+    return pd.DataFrame([features]), None
+
+# ---------------- UI ---------------- #
+chem_name = st.text_input("🔎 Chemical Name", "")
+
+if st.button("Predict"):
+    if chem_name.strip() == "":
+        st.warning("Please enter a chemical name.")
     else:
-        with st.spinner("Fetching chemical information..."):
-            try:
-                # Search ChEMBL for the molecule
-                molecule = new_client.molecule
-                res = molecule.filter(pref_name__icontains=chem_name).only(["molecule_chembl_id", "pref_name", "molecule_structures"]).first()
-                
-                if not res:
-                    st.error(f"No molecule found for '{chem_name}'.")
-                else:
-                    smiles = res.get("molecule_structures", {}).get("canonical_smiles")
-                    chembl_id = res.get("molecule_chembl_id")
-                    pref_name = res.get("pref_name")
-                    
-                    if not smiles:
-                        st.error(f"SMILES not available for '{pref_name}'.")
-                    else:
-                        st.success(f"Found molecule: **{pref_name}** (ChEMBL ID: {chembl_id})")
-                        st.write(f"**SMILES:** `{smiles}`")
+        with st.spinner("Fetching data from ChEMBL..."):
+            df, error = get_chembl_features(chem_name)
 
-                        # Draw molecule
-                        mol = Chem.MolFromSmiles(smiles)
-                        img = Draw.MolToImage(mol, size=(400, 400))
-                        st.image(img, caption=f"{pref_name} Structure", use_column_width=False)
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+        if error:
+            st.error(error)
+        else:
+            st.success("Molecular features retrieved!")
+
+            st.subheader("🧬 Molecular Descriptors")
+            st.dataframe(df)
+
+            if model:
+                prediction = model.predict(df)[0]
+                st.subheader("📈 Predicted pIC50")
+                st.success(f"Predicted Value: {prediction:.3f}")
+            else:
+                st.warning("Model file not found. Upload model.pkl to enable predictions.")
+
+# ---------------- FOOTER ---------------- #
+st.markdown("---")
+st.caption("Data source: ChEMBL Database | No RDKit required 🚀")
