@@ -17,25 +17,21 @@ RDLogger.DisableLog("rdApp.*")
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 
-# ---------------- Local Fallback Compounds ---------------- #
-LOCAL_COMPOUNDS = {
-    "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
-    "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
-    "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
-}
-
-# ---------------- Utility Functions ---------------- #
-
-def is_chembl_id(s: str) -> bool:
-    return s.upper().startswith("CHEMBL")
+# ---------------- Utility ---------------- #
 
 def is_smiles(s: str) -> bool:
     return Chem.MolFromSmiles(s) is not None
 
-def safe_get(url, retries=3, timeout=10):
+def is_chembl_id(s: str) -> bool:
+    return s.upper().startswith("CHEMBL")
+
+def safe_get(url, retries=3, timeout=10, method="GET", json_data=None, headers=None):
     for attempt in range(retries):
         try:
-            r = requests.get(url, timeout=timeout)
+            if method == "GET":
+                r = requests.get(url, timeout=timeout, headers=headers)
+            else:
+                r = requests.post(url, json=json_data, timeout=timeout, headers=headers)
             r.raise_for_status()
             return r
         except requests.RequestException:
@@ -44,41 +40,103 @@ def safe_get(url, retries=3, timeout=10):
             else:
                 return None
 
-# ---------------- ChEMBL helpers (REST only) ---------------- #
+# ---------------- PubChem: name → CID → SMILES ---------------- #
 
-def chembl_search_name_first(name):
-    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={name}&format=json"
+def pubchem_name_to_cid(name: str):
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/cids/JSON"
     r = safe_get(url)
     if not r:
-        return None, None
-    molecules = r.json().get("molecules", [])
-    if not molecules:
-        return None, None
-    mol = molecules[0]
-    cid = mol.get("molecule_chembl_id")
-    smi = mol.get("molecule_structures", {}).get("canonical_smiles")
-    return cid, smi
+        return None
+    cids = r.json().get("IdentifierList", {}).get("CID", [])
+    return cids[0] if cids else None
 
-def chembl_get_smiles_from_id(chembl_id):
+def pubchem_cid_to_smiles(cid: int):
+    url = (
+        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/"
+        f"{cid}/property/CanonicalSMILES/JSON"
+    )
+    r = safe_get(url)
+    if not r:
+        return None
+    props = r.json().get("PropertyTable", {}).get("Properties", [])
+    if not props:
+        return None
+    return props[0].get("CanonicalSMILES")
+
+def pubchem_synonym_to_cid(name: str):
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/synonyms/JSON"
+    r = safe_get(url)
+    if not r:
+        return None
+    info = r.json().get("InformationList", {}).get("Information", [])
+    if not info:
+        return None
+    return info[0].get("CID")
+
+def resolve_name_to_smiles(name: str):
+    # Try direct name → CID
+    cid = pubchem_name_to_cid(name)
+    if cid:
+        smi = pubchem_cid_to_smiles(cid)
+        if smi:
+            return smi
+
+    # Try synonym search → CID
+    cid = pubchem_synonym_to_cid(name)
+    if cid:
+        smi = pubchem_cid_to_smiles(cid)
+        if smi:
+            return smi
+
+    # Try variants
+    variants = {
+        name.strip(),
+        name.lower(),
+        name.upper(),
+        name.replace("-", ""),
+        name.replace(" ", ""),
+        name.replace("‑", ""),
+    }
+    for v in variants:
+        if v == name:
+            continue
+        cid = pubchem_name_to_cid(v)
+        if cid:
+            smi = pubchem_cid_to_smiles(cid)
+            if smi:
+                return smi
+        cid = pubchem_synonym_to_cid(v)
+        if cid:
+            smi = pubchem_cid_to_smiles(cid)
+            if smi:
+                return smi
+
+    return None
+
+# ---------------- ChEMBL: SMILES → ChEMBL IDs + IC50 ---------------- #
+
+def chembl_get_smiles_from_id(chembl_id: str):
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
     r = safe_get(url)
     if not r:
         return None
     return r.json().get("molecule_structures", {}).get("canonical_smiles")
 
-def chembl_similarity_smiles_to_id(smiles, threshold=0.95):
-    url = f"https://www.ebi.ac.uk/chembl/api/data/similarity/{smiles}/{threshold}?format=json"
-    r = safe_get(url)
+def chembl_substructure_search(smiles: str, max_hits: int = 20):
+    url = "https://www.ebi.ac.uk/chembl/api/data/substructure.json"
+    headers = {
+        "X-HTTP-Method-Override": "GET",
+        "Content-Type": "application/json",
+    }
+    payload = {"smiles": smiles}
+    r = safe_get(url, method="POST", json_data=payload, headers=headers)
     if not r:
-        return None
-    mols = r.json().get("molecules", [])
-    if mols:
-        return mols[0].get("molecule_chembl_id")
-    return None
-
-def chembl_get_ic50(chembl_id, top_n=3):
-    if not chembl_id:
         return []
+    molecules = r.json().get("molecules", [])
+    ids = [m.get("molecule_chembl_id") for m in molecules if m.get("molecule_chembl_id")]
+    return ids[:max_hits]
+
+def chembl_get_ic50_for_molecule(chembl_id: str, top_n: int = 3):
     url = (
         "https://www.ebi.ac.uk/chembl/api/data/activity.json"
         f"?molecule_chembl_id={chembl_id}&standard_type=IC50"
@@ -111,7 +169,7 @@ def chembl_get_ic50(chembl_id, top_n=3):
         out.append(
             {
                 "chembl_id": chembl_id,
-                "ic50_value": val,
+                "ic50_value": val_num,
                 "units": units,
                 "pchembl_value": pchembl,
                 "log10_ic50": log10_val,
@@ -122,24 +180,10 @@ def chembl_get_ic50(chembl_id, top_n=3):
     out.sort(key=lambda x: x["pchembl_value"], reverse=True)
     return out[:top_n]
 
-def chembl_get_targets_all_molecules(query, chembl_id):
-    molecule_ids = set()
-    if chembl_id:
-        molecule_ids.add(chembl_id)
-    if query and (not is_chembl_id(query)) and (not is_smiles(query)):
-        url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={query}&format=json"
-        r = safe_get(url)
-        if r:
-            for m in r.json().get("molecules", [])[:25]:
-                mid = m.get("molecule_chembl_id")
-                if mid:
-                    molecule_ids.add(mid)
-    if not molecule_ids:
-        return []
-
+def chembl_get_targets_from_ids(chembl_ids):
     rows = []
     seen = set()
-    for mid in molecule_ids:
+    for mid in chembl_ids:
         mech_url = (
             "https://www.ebi.ac.uk/chembl/api/data/mechanism.json"
             f"?molecule_chembl_id={mid}"
@@ -186,143 +230,43 @@ def chembl_get_targets_all_molecules(query, chembl_id):
             )
     return rows
 
-def chembl_similar_names(query):
-    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={query}&format=json"
-    r = safe_get(url)
-    if not r:
-        return []
-    suggestions = []
-    for m in r.json().get("molecules", [])[:5]:
-        name = m.get("pref_name")
-        cid = m.get("molecule_chembl_id")
-        if name:
-            suggestions.append((name, cid))
-    return suggestions
-
-# ---------------- PubChem helpers (robust name → SMILES) ---------------- #
-
-def pubchem_name_to_smiles_exact(name):
-    url = (
-        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/"
-        f"{name}/property/CanonicalSMILES/JSON"
-    )
-    r = safe_get(url)
-    if not r:
-        return None
-    props = r.json().get("PropertyTable", {}).get("Properties", [])
-    if not props:
-        return None
-    return props[0].get("CanonicalSMILES")
-
-def pubchem_synonym_search_smiles(name):
-    """
-    Use synonym search: /synonym/<name>/property/CanonicalSMILES/JSON
-    This often catches brand names and alternate spellings.
-    """
-    url = (
-        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/synonym/"
-        f"{name}/property/CanonicalSMILES/JSON"
-    )
-    r = safe_get(url)
-    if not r:
-        return None
-    props = r.json().get("PropertyTable", {}).get("Properties", [])
-    if not props:
-        return None
-    return props[0].get("CanonicalSMILES")
-
-def pubchem_name_to_smiles_robust(name):
-    """
-    Robust resolver:
-    1) exact name
-    2) lower, upper
-    3) hyphen removed
-    4) synonym search
-    5) synonym search on variants
-    """
-    candidates = set()
-    candidates.add(name)
-    candidates.add(name.strip())
-    candidates.add(name.lower())
-    candidates.add(name.upper())
-    candidates.add(name.replace(" ", ""))
-    candidates.add(name.replace("-", ""))
-    candidates.add(name.replace("‑", ""))  # non-breaking hyphen
-
-    # simple Nutlin-style tweak: flip last 'a'/'A'
-    if name.endswith("A"):
-        candidates.add(name[:-1] + "a")
-    if name.endswith("a"):
-        candidates.add(name[:-1] + "A")
-
-    # 1) direct name → SMILES
-    for n in candidates:
-        smi = pubchem_name_to_smiles_exact(n)
-        if smi:
-            return smi
-
-    # 2) synonym search
-    for n in candidates:
-        smi = pubchem_synonym_search_smiles(n)
-        if smi:
-            return smi
-
-    return None
-
 # ---------------- RDKit descriptors ---------------- #
 
-def compute_rdkit_descriptors(smiles):
+def compute_rdkit_descriptors(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
     return {name: func(mol) for name, func in Descriptors.descList}
 
-# ---------------- Input processing (ChEMBL + PubChem fallback) ---------------- #
+# ---------------- Input processing (SMILES-first) ---------------- #
 
-def process_input(user_input):
+def process_input(user_input: str):
     user_input = user_input.strip()
-    chembl_id, smiles, compound_name, source = None, None, None, None
+    smiles = None
+    chembl_ids = []
 
-    # Local fallback
-    if user_input.lower() in LOCAL_COMPOUNDS:
-        smiles = LOCAL_COMPOUNDS[user_input.lower()]
-        compound_name = user_input
-        source = "local"
-
-    # ChEMBL ID
-    elif is_chembl_id(user_input):
-        chembl_id = user_input.upper()
-        smiles = chembl_get_smiles_from_id(chembl_id)
-        if smiles:
-            source = "chembl_id"
-
-    # SMILES
-    elif is_smiles(user_input):
+    # 1) If SMILES directly
+    if is_smiles(user_input):
         smiles = user_input
-        chembl_id = chembl_similarity_smiles_to_id(smiles)
-        source = "smiles"
 
-    # Name: try ChEMBL first, then robust PubChem
-    else:
-        chembl_id, smiles = chembl_search_name_first(user_input)
-        compound_name = user_input
+    # 2) If ChEMBL ID
+    elif is_chembl_id(user_input):
+        smiles = chembl_get_smiles_from_id(user_input.upper())
         if smiles:
-            source = "chembl_name"
-        else:
-            smiles = pubchem_name_to_smiles_robust(user_input)
-            if smiles:
-                source = "pubchem_name"
+            chembl_ids.append(user_input.upper())
+
+    # 3) Otherwise: treat as name → PubChem → SMILES
+    else:
+        smiles = resolve_name_to_smiles(user_input)
 
     if not smiles:
-        return None, None, None, None
+        return None, []
 
-    descriptors = compute_rdkit_descriptors(smiles)
-    if descriptors is None:
-        return None, None, None, None
+    # 4) From SMILES → ChEMBL IDs (substructure)
+    ids = chembl_substructure_search(smiles)
+    chembl_ids = list(set(chembl_ids + ids))
 
-    descriptors["chembl_id"] = chembl_id
-    descriptors["smiles"] = smiles
-    return descriptors, chembl_id, compound_name, source
+    return smiles, chembl_ids
 
 # ---------------- Prediction ---------------- #
 
@@ -347,160 +291,129 @@ def predict_ic50(descriptor_dict, model_path):
     confidence = saved.get("r2", None)
     return log_pred, confidence
 
-# ---------------- Streamlit Layout ---------------- #
+# ---------------- Potency comparison ---------------- #
 
-st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
+def compare_potency(pred_nM, exp_nM, units):
+    if exp_nM <= 0:
+        return "Experimental IC50 value is non-positive; comparison not meaningful."
 
-st.markdown("""
-<style>
-body { background-color: #f5f6fa; }
-.pc-section {
-    background-color: #ffffff;
-    border-radius: 8px;
-    padding: 1.1rem 1.2rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
-}
-.pc-section-title {
-    font-weight: 600;
-    margin-bottom: 0.6rem;
-    font-size: 1.05rem;
-}
-.pc-structure-img img {
-    max-width: 260px;
-    width: 100%;
-    height: auto;
-}
-</style>
-""", unsafe_allow_html=True)
+    ratio = pred_nM / exp_nM
 
-st.markdown("&nbsp;", unsafe_allow_html=True)
-st.markdown("## PPIM‑IC50Pred")
-st.markdown("IC50 prediction server for small molecules (ChEMBL + PubChem)")
+    # Within 2-fold → moderate / good agreement
+    if 0.5 <= ratio <= 2.0:
+        return (
+            f"Model prediction is in good agreement with experimental IC50 "
+            f"({pred_nM:.2f} {units} vs {exp_nM:.2f} {units}); "
+            f"moderate difference."
+        )
 
-st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-st.markdown("<div class='pc-section-title'>Search compound</div>", unsafe_allow_html=True)
-user_input = st.text_input(
-    "Enter chemical name, ChEMBL ID, or SMILES:",
-    placeholder="e.g., Nutlin-3a, Nutlin-3A, Nutlin, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
+    # Predicted IC50 much higher → model underestimates potency (weaker)
+    if ratio > 2.0:
+        return (
+            f"Model underestimates potency (predicts weaker activity): "
+            f"predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
+        )
+
+    # Predicted IC50 much lower → model overestimates potency (stronger)
+    if ratio < 0.5:
+        return (
+            f"Model overestimates potency (predicts stronger activity): "
+            f"predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
+        )
+
+    return (
+        f"Model and experimental IC50 differ (predicted {pred_nM:.2f} {units} "
+        f"vs experimental {exp_nM:.2f} {units})."
+    )
+
+# ---------------- Streamlit UI ---------------- #
+
+st.set_page_config(page_title="PPIM‑IC50Pred", layout="centered")
+
+st.markdown(
+    "<h2 style='text-align:center;'>PPIM‑IC50Pred</h2>"
+    "<p style='text-align:center; color:#555;'>IC50 Prediction Server (SMILES‑first)</p>",
+    unsafe_allow_html=True,
 )
-st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("---")
+
+user_input = st.text_input(
+    "Enter SMILES, ChEMBL ID, or chemical name:",
+    placeholder="e.g., Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O",
+)
 
 if user_input:
-    descriptors, chembl_id, compound_name, source = process_input(user_input)
+    smiles, chembl_ids = process_input(user_input)
 
-    if descriptors is None:
-        st.error("No matching compound found in ChEMBL or PubChem.")
-
-        st.markdown("""
-        ### Why this happens
-        - The name may be a trade/brand name or abbreviation  
-        - The compound may contain metals or salts (Na⁺, K⁺, Mg²⁺, Ca²⁺)  
-        - Naming may follow a different convention (PubChem vs ChEMBL)  
-        - The compound may be stored under a different synonym  
-        - The name may be misspelled  
-
-        ### What to try
-        - Try the IUPAC name  
-        - Try the SMILES string  
-        - Try the InChIKey  
-        - Remove metals/salts (e.g., “Sodium XYZ” → “XYZ”)  
-        - Check synonyms in PubChem  
-        """)
-
-        st.markdown("### External search")
-        st.markdown(f"- PubChem: https://pubchem.ncbi.nlm.nih.gov/#query={user_input}")
-        st.markdown(f"- PubMed: https://pubmed.ncbi.nlm.nih.gov/?term={user_input}")
-
-        st.markdown("### Possible ChEMBL suggestions")
-        suggestions = chembl_similar_names(user_input)
-        if suggestions:
-            for name, cid in suggestions:
-                st.markdown(f"- **{name}** — `{cid}`")
-        else:
-            st.info("No similar names found in ChEMBL.")
+    if not smiles:
+        st.error("Could not resolve input to a valid SMILES using PubChem/ChEMBL.")
         st.stop()
 
-    st.markdown("""
-    ### 🧪 Important Notes
-    - Predicted IC50 comes from the ML model using RDKit descriptors.  
-    - Experimental IC50 values (when shown) are retrieved from ChEMBL.  
-    - Many chemicals bind to multiple diverse targets, so IC50 varies across:
-      - Different proteins  
-      - Different cell lines  
-      - Different assay conditions  
-    - If ChEMBL data are missing, PubChem is still used to obtain SMILES and run the model.
-    """)
+    descriptors = compute_rdkit_descriptors(smiles)
+    if descriptors is None:
+        st.error("RDKit could not compute descriptors for this SMILES.")
+        st.stop()
 
-    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>Compound summary</div>", unsafe_allow_html=True)
-    st.markdown(f"**Name:** {compound_name or 'Unknown'}")
-    st.markdown(f"**ChEMBL ID:** {chembl_id or 'N/A'}")
-    st.markdown(f"**Source used for SMILES:** {source or 'Unknown'}")
-    st.markdown(f"**SMILES:** `{descriptors['smiles']}`")
-    st.markdown("</div>", unsafe_allow_html=True)
+    descriptors["smiles"] = smiles
 
-    st.markdown("<div class='pc-section pc-structure-img'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>2D structure</div>", unsafe_allow_html=True)
-    mol = Chem.MolFromSmiles(descriptors["smiles"])
+    st.markdown("### SMILES")
+    st.code(smiles, language="text")
+
+    st.markdown("### 2D Structure")
+    mol = Chem.MolFromSmiles(smiles)
     if mol:
         img = Draw.MolToImage(mol, size=(260, 260))
-        st.image(img)
+        st.image(img, use_column_width=False)
     else:
         st.info("Could not render molecular structure.")
-    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>Predicted IC50</div>", unsafe_allow_html=True)
+    st.markdown("### Predicted IC50")
     log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-    st.markdown(f"**Predicted log(IC50) [nM]:** `{log_val:.4f}`")
-    ic50_nM = 10 ** log_val
-    st.markdown(f"**Predicted IC50 (nM):** `{ic50_nM:.2f}`")
-    if ic50_nM <= 100:
-        st.success("Strong predicted potency (low IC50).")
-    elif ic50_nM <= 1000:
-        st.info("Moderate predicted potency.")
-    else:
-        st.warning("Weak predicted potency (high IC50).")
+    pred_nM = 10 ** log_val
+    st.markdown(f"- **Predicted log(IC50) [nM]:** `{log_val:.4f}`")
+    st.markdown(f"- **Predicted IC50:** `{pred_nM:.2f} nM`")
     if conf is not None:
-        st.markdown(f"**Model confidence (R²):** `{conf:.4f}`")
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f"- **Model confidence (R²):** `{conf:.4f}`")
 
-    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>Experimental IC50 (ChEMBL)</div>", unsafe_allow_html=True)
-    if chembl_id:
-        exp_entries = chembl_get_ic50(chembl_id, top_n=3)
-        if exp_entries:
-            for i, e in enumerate(exp_entries, 1):
-                st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-                st.markdown(f"- IC50: `{e['ic50_value']} {e['units']}`")
-                st.markdown(f"- pChEMBL: `{e['pchembl_value']}`")
-                if e["log10_ic50"] is not None:
-                    st.markdown(f"- log(IC50): `{e['log10_ic50']}`")
-                st.markdown("---")
-        else:
-            st.info("No experimental IC50 values found in ChEMBL for this compound.")
+    st.markdown("### Experimental IC50 (ChEMBL)")
+    if not chembl_ids:
+        st.info("No matching ChEMBL molecules found from SMILES; experimental IC50 not available.")
     else:
-        st.info("No ChEMBL ID available → experimental IC50 cannot be retrieved.")
-    st.markdown("</div>", unsafe_allow_html=True)
+        all_exp = []
+        for cid in chembl_ids:
+            all_exp.extend(chembl_get_ic50_for_molecule(cid, top_n=3))
 
-    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>Target information (ChEMBL, all matching molecules)</div>", unsafe_allow_html=True)
-    if chembl_id:
-        target_rows = chembl_get_targets_all_molecules(user_input, chembl_id)
+        if not all_exp:
+            st.info("No experimental IC50 values found in ChEMBL for these structures.")
+        else:
+            # Show top few entries and compare to best (lowest IC50)
+            df_exp = pd.DataFrame(all_exp)
+            df_exp_sorted = df_exp.sort_values("ic50_value")
+            best = df_exp_sorted.iloc[0]
+            best_ic50 = best["ic50_value"]
+            best_units = best["units"]
+
+            st.markdown("**Top experimental IC50 entries:**")
+            for i, row in df_exp_sorted.head(5).iterrows():
+                st.markdown(
+                    f"- **Molecule:** {row['chembl_id']} | "
+                    f"**Target:** {row['target_name']} ({row['target_id']}) | "
+                    f"IC50: `{row['ic50_value']:.2f} {row['units']}` | "
+                    f"pChEMBL: `{row['pchembl_value']}`"
+                )
+
+            st.markdown("---")
+            st.markdown("### Predicted vs Experimental Potency")
+            comment = compare_potency(pred_nM, best_ic50, best_units)
+            st.markdown(comment)
+
+    st.markdown("### Target information (ChEMBL)")
+    if chembl_ids:
+        target_rows = chembl_get_targets_from_ids(chembl_ids)
         if target_rows:
             st.table(pd.DataFrame(target_rows))
         else:
-            st.info("No target information available in ChEMBL for this query.")
+            st.info("No target mechanism information available in ChEMBL for these molecules.")
     else:
-        st.info("No ChEMBL ID available → target information cannot be retrieved.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='pc-section'>", unsafe_allow_html=True)
-    st.markdown("<div class='pc-section-title'>External resources</div>", unsafe_allow_html=True)
-    query_name = compound_name if compound_name else descriptors["smiles"]
-    st.markdown(f"- **PubChem compound search:** https://pubchem.ncbi.nlm.nih.gov/#query={query_name}")
-    st.markdown(f"- **PubMed literature search:** https://pubmed.ncbi.nlm.nih.gov/?term={query_name}")
-    if chembl_id:
-        st.markdown(f"- **ChEMBL compound page:** https://www.ebi.ac.uk/chembl/compound_report_card/{chembl_id}")
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.info("No ChEMBL IDs available → target information not retrieved.")
