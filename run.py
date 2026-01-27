@@ -7,8 +7,6 @@ import requests
 import pandas as pd
 import streamlit as st
 
-import datamol as dm
-from rdkit.Chem import Descriptors, Draw
 from chembl_webresource_client.new_client import new_client
 from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
@@ -24,17 +22,12 @@ LOCAL_COMPOUNDS = {
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
 }
 
+RDKit_DESCRIPTOR_API = "https://rdkit-api.johnsnowlabs.com/descriptors"
+
 # ---------------- Utility Functions ---------------- #
 
-def is_chembl_id(s):
+def is_chembl_id(s: str) -> bool:
     return s.upper().startswith("CHEMBL")
-
-def is_smiles(s):
-    try:
-        mol = dm.to_mol(s)
-        return mol is not None
-    except:
-        return False
 
 def safe_get(url, retries=3, timeout=10):
     for attempt in range(retries):
@@ -78,38 +71,55 @@ def get_chembl_id_from_smiles_similarity(smiles, threshold=0.95):
         return mols[0].get('molecule_chembl_id')
     return None
 
-def compute_rdkit_descriptors(smiles):
-    mol = dm.to_mol(smiles)
-    if mol is None:
+def compute_rdkit_descriptors_remote(smiles: str):
+    """
+    Call a remote RDKit descriptor service that returns a dict of descriptors.
+    Assumes the API returns keys compatible with the model training.
+    """
+    try:
+        resp = requests.post(
+            RDKit_DESCRIPTOR_API,
+            json={"smiles": smiles},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict) or not data:
+            st.error("Descriptor API returned an unexpected response.")
+            return None
+        return data
+    except Exception as e:
+        st.error(f"Descriptor API error: {e}")
         return None
-    return {name: func(mol) for name, func in Descriptors.descList}
 
 def process_input(user_input):
-    user_input = user_input.strip().replace(" ", "")
+    user_input = user_input.strip()
     chembl_id, smiles, compound_name = None, None, None
 
     # Local fallback
-    if user_input.lower() in LOCAL_COMPOUNDS:
-        smiles = LOCAL_COMPOUNDS[user_input.lower()]
+    if user_input.lower().replace(" ", "") in LOCAL_COMPOUNDS:
+        key = user_input.lower().replace(" ", "")
+        smiles = LOCAL_COMPOUNDS[key]
         compound_name = user_input
 
     elif is_chembl_id(user_input):
         chembl_id = user_input.upper()
         smiles = get_smiles_from_chembl(chembl_id)
 
-    elif is_smiles(user_input):
-        smiles = user_input
-        chembl_id = get_chembl_id_from_smiles_similarity(smiles)
-
     else:
+        # Try name search first
         chembl_id, smiles = search_chembl_by_name(user_input)
         compound_name = user_input
+        # If that fails, treat as SMILES and try similarity
+        if not smiles:
+            smiles = user_input
+            chembl_id = get_chembl_id_from_smiles_similarity(smiles)
 
     if not smiles:
         st.error(f"Could not resolve '{user_input}' to a valid SMILES.")
         return None, None, None
 
-    descriptors = compute_rdkit_descriptors(smiles)
+    descriptors = compute_rdkit_descriptors_remote(smiles)
     if descriptors is None:
         st.error("Descriptor calculation failed.")
         return None, None, None
@@ -205,12 +215,16 @@ if user_input:
         st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
         st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
-        # --- 2D Structure ---
+        # --- 2D Structure (via external image services) ---
         st.subheader("2D Structure Visualization")
-        mol = dm.to_mol(descriptors['smiles'])
-        if mol:
-            img = Draw.MolToImage(mol, size=(300, 300))
-            st.image(img, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
+        img_url = None
+        if chembl_id:
+            img_url = f"https://www.ebi.ac.uk/chembl/api/data/image/{chembl_id}"
+        else:
+            # Fallback: CACTUS depiction from SMILES
+            img_url = f"https://cactus.nci.nih.gov/chemical/structure/{descriptors['smiles']}/image"
+        if img_url:
+            st.image(img_url, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
         else:
             st.warning("Could not render molecular structure.")
 
