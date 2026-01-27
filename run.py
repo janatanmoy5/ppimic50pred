@@ -18,6 +18,7 @@ RDLogger.DisableLog("rdApp.*")
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 
+# ---------------- Local Fallback Compounds ---------------- #
 LOCAL_COMPOUNDS = {
     "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
     "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
@@ -33,6 +34,7 @@ def is_smiles(s: str) -> bool:
     return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
+    """Requests with retry support."""
     for attempt in range(retries):
         try:
             r = requests.get(url, timeout=timeout)
@@ -58,6 +60,7 @@ def search_chembl_by_name(name):
     return None, None
 
 def get_similar_names(query):
+    """Return up to 5 similar chemical names from ChEMBL."""
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={query}&format=json"
     r = safe_get(url)
     if not r:
@@ -98,8 +101,10 @@ def process_input(user_input):
     user_input = user_input.strip()
     chembl_id, smiles, compound_name = None, None, None
 
+    # --- Local fallback first ---
     if user_input.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[user_input.lower()]
+        chembl_id = None
         compound_name = user_input
 
     elif is_chembl_id(user_input):
@@ -132,12 +137,10 @@ def get_top_ic50_values(chembl_id, top_n=3):
         return []
     activity = new_client.activity
     target_client = new_client.target
-
     try:
         res = activity.filter(molecule_chembl_id=chembl_id, standard_type="IC50")
     except Exception:
         return []
-
     valid = []
     for entry in res:
         pchembl = entry.get("pchembl_value")
@@ -145,13 +148,11 @@ def get_top_ic50_values(chembl_id, top_n=3):
         units = entry.get("standard_units")
         if pchembl is None or val is None or units is None:
             continue
-
         try:
             val_num = float(val)
             log10_val = math.log10(val_num) if val_num > 0 else None
         except Exception:
             log10_val = None
-
         target_name = "Unknown"
         tid = entry.get("target_chembl_id")
         if tid:
@@ -160,7 +161,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
                 target_name = target_data.get("pref_name") or "Unknown"
             except Exception:
                 pass
-
         valid.append(
             {
                 "chembl_id": chembl_id,
@@ -172,7 +172,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
                 "target_id": tid,
             }
         )
-
     valid.sort(key=lambda x: x["pchembl_value"], reverse=True)
     return valid[:top_n]
 
@@ -180,7 +179,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
 
 def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
-
     cols_to_drop = [
         "NumRadicalElectrons",
         "SMR_VSA8",
@@ -207,12 +205,10 @@ def predict_ic50(descriptor_dict, model_path):
         "chembl_id",
         "smiles",
     ]
-
     df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
     saved = joblib.load(model_path)
     model, scaler = saved["model"], saved["scaler"]
-
     X_scaled = scaler.transform(df)
     log_pred = model.predict(X_scaled)[0]
 
@@ -269,7 +265,7 @@ st.markdown(
         font-size: 1.05rem;
     }
     .pc-structure-img img {
-        max-width: 280px;   /* desktop cap */
+        max-width: 260px;   /* desktop cap */
         width: 100%;        /* mobile full width */
         height: auto;
     }
