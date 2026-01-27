@@ -1,4 +1,3 @@
-# run.py
 import streamlit as st
 import math
 import requests
@@ -13,27 +12,27 @@ from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 
-# ================= RDKit =================
+# ---------------- RDKit ---------------- #
 try:
     from rdkit import Chem, RDLogger
-    from rdkit.Chem import Descriptors
+    from rdkit.Chem import Descriptors, Draw
     RDLogger.DisableLog("rdApp.*")
     RDKit_AVAILABLE = True
-except Exception:
+except ImportError:
     RDKit_AVAILABLE = False
 
-# ================= CONFIG =================
+# ---------------- CONFIG ---------------- #
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, "random_forest_model.pkl")
 
-# ================= FALLBACK COMPOUNDS =================
+# ---------------- Local Fallback Compounds ---------------- #
 LOCAL_COMPOUNDS = {
     "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
     "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
 }
 
-# ================= UTILITIES =================
+# ---------------- Utility Functions ---------------- #
 def is_chembl_id(x: str) -> bool:
     return x.upper().startswith("CHEMBL")
 
@@ -52,7 +51,7 @@ def safe_get(url, retries=3, timeout=10):
             time.sleep(1)
     return None
 
-# ================= ChEMBL RESOLUTION =================
+# ---------------- ChEMBL Resolution ---------------- #
 def chembl_name_to_smiles(name):
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={name}&format=json"
     r = safe_get(url)
@@ -62,10 +61,7 @@ def chembl_name_to_smiles(name):
     if not mols:
         return None, None
     m = mols[0]
-    return (
-        m.get("molecule_chembl_id"),
-        m.get("molecule_structures", {}).get("canonical_smiles")
-    )
+    return m.get("molecule_chembl_id"), m.get("molecule_structures", {}).get("canonical_smiles")
 
 def chembl_id_to_smiles(chembl_id):
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
@@ -74,16 +70,14 @@ def chembl_id_to_smiles(chembl_id):
         return None
     return r.json().get("molecule_structures", {}).get("canonical_smiles")
 
-# ================= DESCRIPTORS =================
+# ---------------- Descriptors ---------------- #
 def compute_descriptors(smiles):
     if not RDKit_AVAILABLE:
-        st.error("RDKit is not available in this environment.")
+        st.error("RDKit not available!")
         return None
-
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
-
     desc = {}
     for name, fn in Descriptors.descList:
         try:
@@ -92,7 +86,7 @@ def compute_descriptors(smiles):
             desc[name] = 0.0
     return desc
 
-# ================= INPUT PIPELINE =================
+# ---------------- Input Processing ---------------- #
 def process_input(user_input):
     user_input = user_input.strip()
     smiles = None
@@ -112,7 +106,7 @@ def process_input(user_input):
         cname = user_input
 
     if not smiles:
-        st.error("❌ Could not resolve compound to a valid SMILES.")
+        st.error("❌ Could not resolve compound to valid SMILES.")
         return None, None, None
 
     desc = compute_descriptors(smiles)
@@ -124,21 +118,16 @@ def process_input(user_input):
     desc["chembl_id"] = chembl_id
     return desc, chembl_id, cname
 
-# ================= EXPERIMENTAL DATA =================
+# ---------------- Experimental Data ---------------- #
 from chembl_webresource_client.new_client import new_client
 
-def get_top_ic50_values(chembl_id, top_n=3):
+def get_top_ic50(chembl_id, top_n=3):
     if not chembl_id:
         return []
-
     try:
-        acts = new_client.activity.filter(
-            molecule_chembl_id=chembl_id,
-            standard_type="IC50"
-        )
+        acts = new_client.activity.filter(molecule_chembl_id=chembl_id, standard_type="IC50")
     except Exception:
         return []
-
     rows = []
     for a in acts:
         try:
@@ -156,60 +145,61 @@ def get_top_ic50_values(chembl_id, top_n=3):
     rows.sort(key=lambda x: x["pChEMBL"] or 0, reverse=True)
     return rows[:top_n]
 
-# ================= PREDICTION =================
+# ---------------- Prediction ---------------- #
 def predict_ic50(desc):
     df = pd.DataFrame([desc])
+    drop_cols = ["chembl_id", "smiles", "NumRadicalElectrons", "fr_azide", "fr_diazo",
+                 "fr_nitroso", "fr_quatN"]
+    df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
     saved = joblib.load(MODEL_PATH)
-    model = saved["model"]
-    scaler = saved["scaler"]
+    model, scaler = saved["model"], saved["scaler"]
 
-    # Use features from training
-    feature_names = saved.get("features", df.columns.tolist())
+    # Only keep columns that were in training
+    training_cols = saved.get("feature_names")
+    if training_cols:
+        df = df.reindex(columns=training_cols, fill_value=0.0)
 
-    # Keep only features the model expects
-    X = pd.DataFrame()
-    for f in feature_names:
-        X[f] = df.get(f, pd.Series([0.0]))
+    X = scaler.transform(df)
+    log_pred = model.predict(X)[0]
 
-    X_scaled = scaler.transform(X)
-    log_pred = model.predict(X_scaled)[0]
-
-    r2 = saved.get("r2", None)
+    r2 = saved.get("r2")
     if r2 is None and "X_train" in saved:
         Xtr = scaler.transform(saved["X_train"])
         r2 = r2_score(saved["y_train"], model.predict(Xtr))
 
     return log_pred, r2
 
-# ================= STREAMLIT UI =================
+# ---------------- Streamlit UI ---------------- #
 st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
 st.title("⚗️ PPIM-IC50Pred")
 
 if not RDKit_AVAILABLE:
-    st.error("RDKit is not available. Please use Python 3.12 or 3.11 for deployment.")
+    st.error("RDKit is not available. This app cannot run.")
     st.stop()
 
-user_input = st.text_input(
-    "Enter compound name, ChEMBL ID, or SMILES",
-    placeholder="aspirin | CHEMBL25 | CC(=O)OC1=CC=CC=C1C(=O)O"
-)
+user_input = st.text_input("Enter compound name, ChEMBL ID, or SMILES:")
 
 if user_input:
     desc, chembl_id, cname = process_input(user_input)
-
     if desc:
-        st.subheader("Compound Info")
-        st.write("**Name:**", cname or "Unknown")
-        st.write("**ChEMBL ID:**", chembl_id or "N/A")
-        st.write("**SMILES:**", desc["smiles"])
+        st.subheader("Compound Details")
+        st.write("Name:", cname or "Unknown")
+        st.write("ChEMBL ID:", chembl_id or "N/A")
+        st.write("SMILES:", desc["smiles"])
+
+        mol = Chem.MolFromSmiles(desc["smiles"])
+        if mol:
+            st.subheader("2D Structure")
+            img = Draw.MolToImage(mol, size=(300, 300))
+            st.image(img, use_column_width=False)
 
         log_ic50, r2 = predict_ic50(desc)
         st.subheader("Prediction")
-        st.success(f"Predicted log(IC50): **{log_ic50:.4f}**")
+        st.success(f"Predicted log(IC50): {log_ic50:.4f}")
         if r2:
             st.caption(f"Model R²: {r2:.3f}")
 
-        exp = get_top_ic50_values(chembl_id)
+        exp = get_top_ic50(chembl_id)
         if exp:
             st.subheader("Experimental IC50 (ChEMBL)")
             st.dataframe(pd.DataFrame(exp))
