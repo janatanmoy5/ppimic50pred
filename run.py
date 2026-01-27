@@ -4,14 +4,17 @@ import math
 import joblib
 import warnings
 import requests
-import numpy as np
+import pandas as pd
 import streamlit as st
 
+from rdkit import Chem, RDLogger
+from rdkit.Chem import Descriptors, Draw
 from chembl_webresource_client.new_client import new_client
 from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+RDLogger.DisableLog('rdApp.*')
 
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
@@ -22,13 +25,13 @@ LOCAL_COMPOUNDS = {
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
 }
 
-# Remote RDKit descriptor API (you can swap this to your own service)
-RDKIT_DESCRIPTOR_API = "https://rdkit-api.johnsnowlabs.com/descriptors"
-
 # ---------------- Utility Functions ---------------- #
 
-def is_chembl_id(s: str) -> bool:
+def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
+
+def is_smiles(s):
+    return Chem.MolFromSmiles(s) is not None
 
 def safe_get(url, retries=3, timeout=10):
     for attempt in range(retries):
@@ -72,55 +75,37 @@ def get_chembl_id_from_smiles_similarity(smiles, threshold=0.95):
         return mols[0].get('molecule_chembl_id')
     return None
 
-def compute_rdkit_descriptors_remote(smiles: str):
-    """
-    Call a remote RDKit descriptor service that returns a dict of descriptors.
-    Assumes the API returns keys compatible with the model training.
-    """
-    try:
-        resp = requests.post(
-            RDKIT_DESCRIPTOR_API,
-            json={"smiles": smiles},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if not isinstance(data, dict) or not data:
-            st.error("Descriptor API returned an unexpected response.")
-            return None
-        return data
-    except Exception as e:
-        st.error(f"Descriptor API error: {e}")
+def compute_rdkit_descriptors(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
         return None
+    return {name: func(mol) for name, func in Descriptors.descList}
 
 def process_input(user_input):
-    user_input = user_input.strip()
+    user_input = user_input.strip().replace(" ", "")
     chembl_id, smiles, compound_name = None, None, None
 
-    # Local fallback
-    key = user_input.lower().replace(" ", "")
-    if key in LOCAL_COMPOUNDS:
-        smiles = LOCAL_COMPOUNDS[key]
+    if user_input.lower() in LOCAL_COMPOUNDS:
+        smiles = LOCAL_COMPOUNDS[user_input.lower()]
         compound_name = user_input
 
     elif is_chembl_id(user_input):
         chembl_id = user_input.upper()
         smiles = get_smiles_from_chembl(chembl_id)
 
+    elif is_smiles(user_input):
+        smiles = user_input
+        chembl_id = get_chembl_id_from_smiles_similarity(smiles)
+
     else:
-        # Try name search first
         chembl_id, smiles = search_chembl_by_name(user_input)
         compound_name = user_input
-        # If that fails, treat as SMILES and try similarity
-        if not smiles:
-            smiles = user_input
-            chembl_id = get_chembl_id_from_smiles_similarity(smiles)
 
     if not smiles:
         st.error(f"Could not resolve '{user_input}' to a valid SMILES.")
         return None, None, None
 
-    descriptors = compute_rdkit_descriptors_remote(smiles)
+    descriptors = compute_rdkit_descriptors(smiles)
     if descriptors is None:
         st.error("Descriptor calculation failed.")
         return None, None, None
@@ -174,68 +159,29 @@ def get_top_ic50_values(chembl_id, top_n=3):
 
 # ---------------- Prediction ---------------- #
 
-def build_feature_vector(descriptor_dict, saved_obj):
-    """
-    Build a NumPy feature vector in the exact order expected by the scaler/model.
-    We try, in order:
-      1) saved_obj["feature_names"] if present
-      2) saved_obj["feature_order"] if present
-      3) infer from descriptor_dict keys minus dropped columns, sorted
-    """
-    cols_to_drop = {
+def predict_ic50(descriptor_dict, model_path):
+    df = pd.DataFrame([descriptor_dict])
+    cols_to_drop = [
         'NumRadicalElectrons', 'SMR_VSA8', 'SlogP_VSA9', 'fr_aldehyde', 'fr_azide', 'fr_barbitur',
         'fr_benzodiazepine', 'fr_diazo', 'fr_epoxide', 'fr_isocyan', 'fr_lactam', 'fr_nitroso',
         'fr_prisulfonamd', 'fr_quatN', 'fr_thiocyan', 'fr_term_acetylene', 'fr_phos_ester',
         'fr_oxime', 'fr_dihydropyridine', 'fr_phos_acid', 'fr_hdrzine', 'fr_N_O',
         'chembl_id', 'smiles'
-    }
-
-    feature_names = None
-    if isinstance(saved_obj, dict):
-        if "feature_names" in saved_obj:
-            feature_names = saved_obj["feature_names"]
-        elif "feature_order" in saved_obj:
-            feature_names = saved_obj["feature_order"]
-
-    if feature_names is None:
-        # Infer from descriptor_dict keys
-        keys = [k for k in descriptor_dict.keys() if k not in cols_to_drop]
-        keys.sort()
-        feature_names = keys
-
-    # Build vector
-    vec = []
-    for name in feature_names:
-        val = descriptor_dict.get(name, 0.0)
-        try:
-            val = float(val)
-        except Exception:
-            val = 0.0
-        vec.append(val)
-
-    X = np.array(vec, dtype=float).reshape(1, -1)
-    return X, feature_names
-
-def predict_ic50(descriptor_dict, model_path):
+    ]
+    df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
+    
     saved = joblib.load(model_path)
-    model = saved["model"]
-    scaler = saved["scaler"]
-
-    X, feature_names = build_feature_vector(descriptor_dict, saved)
-    X_scaled = scaler.transform(X)
+    model, scaler = saved["model"], saved["scaler"]
+    X_scaled = scaler.transform(df)
     log_pred = model.predict(X_scaled)[0]
 
     confidence = None
     if "r2" in saved:
         confidence = saved["r2"]
     elif "X_train" in saved and "y_train" in saved:
-        X_train = saved["X_train"]
-        y_train = saved["y_train"]
-        # If X_train was stored as pandas originally, it might be array-like now
-        X_train = np.array(X_train)
-        X_train_scaled = scaler.transform(X_train)
+        X_train_scaled = scaler.transform(saved["X_train"])
         y_train_pred = model.predict(X_train_scaled)
-        confidence = r2_score(y_train, y_train_pred)
+        confidence = r2_score(saved["y_train"], y_train_pred)
 
     return log_pred, confidence
 
@@ -255,42 +201,30 @@ if user_input:
         st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
         st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
-        # --- 2D Structure via external image services ---
         st.subheader("2D Structure Visualization")
-        img_url = None
-        if chembl_id:
-            img_url = f"https://www.ebi.ac.uk/chembl/api/data/image/{chembl_id}"
-        else:
-            img_url = f"https://cactus.nci.nih.gov/chemical/structure/{descriptors['smiles']}/image"
-        if img_url:
-            st.image(img_url, caption=f"{compound_name if compound_name else chembl_id}", use_column_width=False)
+        mol = Chem.MolFromSmiles(descriptors['smiles'])
+        if mol:
+            img = Draw.MolToImage(mol, size=(300, 300))
+            st.image(img, caption=f"{compound_name if compound_name else chembl_id}")
         else:
             st.warning("Could not render molecular structure.")
 
-        # --- Prediction ---
         st.subheader("Prediction Details")
         log_val, conf = predict_ic50(descriptors, MODEL_PATH)
         st.markdown(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
         if conf is not None:
-            st.markdown(f"**Model Confidence (R²):** {conf:.4f} ({conf*100:.2f}%)")
+            st.markdown(f"**Model Confidence (R²):** {conf:.4f}")
 
-        # --- Experimental Data ---
         exp_entries = get_top_ic50_values(chembl_id, top_n=3)
         if exp_entries:
             st.subheader("Experimental IC50 Values from ChEMBL")
             for i, e in enumerate(exp_entries, 1):
                 exp_log_ic50 = float(e['log10_ic50'])
                 diff_val = log_val - exp_log_ic50
-                perc_diff = (diff_val / exp_log_ic50) * 100 if exp_log_ic50 != 0 else 0
                 st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
                 st.markdown(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
                 st.markdown(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
                 st.markdown(f"- log(IC50): {exp_log_ic50:.4f}")
-                st.markdown(f"- 🔄 Difference (Predicted – Experimental): {diff_val:.4f} nM ({perc_diff:.2f}%)")
+                st.markdown(f"- Difference: {diff_val:.4f} nM")
         else:
-            if chembl_id:
-                st.warning("No experimental IC50 values found in ChEMBL.")
-            else:
-                st.info("Experimental IC50 data not available for local compounds.")
-    else:
-        st.error("Could not make prediction.")
+            st.info("No experimental IC50 values found.")
