@@ -1,16 +1,6 @@
-# Streamlit for the web app
-streamlit
-
-# RDKit for chemistry computations
-rdkit-pypi
-
-# ChEMBL client
-chembl-webresource-client
-
-# Standard scientific stack
+requests
 pandas
-numpy
+rdkit-pypi
+chembl_webresource-client
 scikit-learn
 joblib
-requests
-
