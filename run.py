@@ -1,3 +1,4 @@
+# run.py
 import streamlit as st
 import math
 import requests
@@ -15,7 +16,7 @@ warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 # ================= RDKit =================
 try:
     from rdkit import Chem, RDLogger
-    from rdkit.Chem import Descriptors
+    from rdkit.Chem import Descriptors, Draw
     RDLogger.DisableLog("rdApp.*")
     RDKit_AVAILABLE = True
 except Exception:
@@ -57,11 +58,9 @@ def chembl_name_to_smiles(name):
     r = safe_get(url)
     if not r:
         return None, None
-
     mols = r.json().get("molecules", [])
     if not mols:
         return None, None
-
     m = mols[0]
     return (
         m.get("molecule_chembl_id"),
@@ -80,18 +79,15 @@ def compute_descriptors(smiles):
     if not RDKit_AVAILABLE:
         st.error("RDKit is not available in this environment.")
         return None
-
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
-
     desc = {}
     for name, fn in Descriptors.descList:
         try:
             desc[name] = fn(mol)
         except Exception:
             desc[name] = 0.0
-
     return desc
 
 # ================= INPUT PIPELINE =================
@@ -172,17 +168,13 @@ def get_top_ic50_values(chembl_id, top_n=3):
 def predict_ic50(desc):
     df = pd.DataFrame([desc])
 
-    drop_cols = [
-        "chembl_id", "smiles",
-        "NumRadicalElectrons",
-        "fr_azide", "fr_diazo",
-        "fr_nitroso", "fr_quatN"
-    ]
-    df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
-
     saved = joblib.load(MODEL_PATH)
     model = saved["model"]
     scaler = saved["scaler"]
+
+    # Keep only features the model expects
+    model_features = saved.get("features", df.columns.tolist())
+    df = df.reindex(columns=model_features, fill_value=0.0)
 
     X = scaler.transform(df)
     log_pred = model.predict(X)[0]
@@ -211,21 +203,29 @@ if user_input:
     desc, chembl_id, cname = process_input(user_input)
 
     if desc:
-        st.subheader("Compound")
+        st.subheader("Compound Information")
         st.write("**Name:**", cname or "Unknown")
         st.write("**ChEMBL ID:**", chembl_id or "N/A")
         st.write("**SMILES:**", desc["smiles"])
 
-        log_ic50, r2 = predict_ic50(desc)
+        # Show 2D structure
+        if RDKit_AVAILABLE:
+            mol = Chem.MolFromSmiles(desc["smiles"])
+            if mol:
+                st.subheader("2D Structure")
+                st.image(Draw.MolToImage(mol, size=(300, 300)))
 
+        # Prediction
+        log_ic50, r2 = predict_ic50(desc)
         st.subheader("Prediction")
-        st.success(f"Predicted log(IC50): **{log_ic50:.4f}**")
+        st.success(f"Predicted log(IC50) [nM]: **{log_ic50:.4f}**")
         if r2:
             st.caption(f"Model R²: {r2:.3f}")
 
-        exp = get_top_ic50_values(chembl_id)
+        # Experimental data
+        exp = get_top_ic50_values(chembl_id) if chembl_id else []
         if exp:
             st.subheader("Experimental IC50 (ChEMBL)")
             st.dataframe(pd.DataFrame(exp))
         else:
-            st.info("No experimental IC50 data found.")
+            st.info("Experimental IC50 data not available for local compounds.")
