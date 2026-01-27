@@ -3,7 +3,7 @@ services:
     name: ppim-ic50pred
     env: docker
     plan: free
-    repo: https://github.com/janatanmoy5/ppimic50pred
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
     branch: main
     dockerfilePath: Dockerfile
     healthCheckPath: /
