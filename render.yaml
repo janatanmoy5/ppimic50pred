@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ppim-ic50pred
+    env: docker
+    plan: free
+    repo: https://github.com/janatanmoy5/ppimic50pred
+    branch: main
+    dockerfilePath: Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
