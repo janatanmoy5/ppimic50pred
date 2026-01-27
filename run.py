@@ -1,105 +1,76 @@
 import streamlit as st
 import pandas as pd
-import subprocess
-import sys
-import os
-
-# ---------------- Install missing packages dynamically ---------------- #
-def install_package(package, github_repo=None):
-    """Install package via pip if not already installed. If github_repo is provided, install from GitHub."""
-    try:
-        __import__(package)
-    except ModuleNotFoundError:
-        if github_repo:
-            st.info(f"Installing {package} from GitHub...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "git+" + github_repo])
-        else:
-            st.info(f"Installing {package} via pip...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# ---------------- Install required packages ---------------- #
-# RDKit from GitHub, others from PyPI
-install_package("rdkit", "https://github.com/kuelumbus/rdkit-pypi.git")
-for pkg in ["chembl_webresource_client", "pandas", "scikit-learn"]:
-    install_package(pkg)
-
-# ---------------- Now import after install ---------------- #
-from rdkit import Chem
-from rdkit.Chem import Descriptors
 from chembl_webresource_client.new_client import new_client
 import joblib
+import os
 
-# ---------------- Streamlit App ---------------- #
 st.set_page_config(page_title="Chemical Activity Predictor", layout="centered")
-st.title("💊 Chemical Activity Predictor")
 
-MODEL_PATH = "ml_model.pkl"  # Path to your ML model
+st.title("Chemical Activity Predictor")
+st.write("Enter a chemical name to fetch details and predict activity.")
 
-# Load ML model if exists
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        model = joblib.load(MODEL_PATH)
-        st.success("✅ ML model loaded")
-        return model
-    else:
-        st.warning("⚠️ ML model not found, predictions will be skipped")
-        return None
+# --------------------------
+# Load ML model
+# --------------------------
+MODEL_PATH = "ml_model.pkl"
 
-model = load_model()
+if os.path.exists(MODEL_PATH):
+    model = joblib.load(MODEL_PATH)
+    st.success("✅ ML model loaded")
+else:
+    model = None
+    st.warning("⚠️ ML model not found. Predictions will not work.")
 
-# ---------------- Helper Functions ---------------- #
-def fetch_chembl_info(chemical_name):
-    molecule = new_client.molecule
-    res = molecule.filter(pref_name__iexact=chemical_name).only(
-        ["molecule_chembl_id", "pref_name", "molecule_structures"]
-    )
-    if res:
-        chembl_id = res[0]["molecule_chembl_id"]
-        smiles = res[0]["molecule_structures"]["canonical_smiles"]
-        return chembl_id, smiles
-    return None, None
-
-def compute_descriptors(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    return {
-        "MolecularWeight": Descriptors.MolWt(mol),
-        "AlogP": Descriptors.MolLogP(mol),
-        "TPSA": Descriptors.TPSA(mol),
-        "NumHAcceptors": Descriptors.NumHAcceptors(mol),
-        "NumHDonors": Descriptors.NumHDonors(mol),
-    }
-
-# ---------------- Streamlit UI ---------------- #
-chemical_name = st.text_input("Enter a chemical name", "")
+# --------------------------
+# Input chemical
+# --------------------------
+chem_name = st.text_input("Chemical Name", "")
 
 if st.button("Search"):
-    if not chemical_name.strip():
-        st.warning("Please enter a chemical name")
+    if chem_name.strip() == "":
+        st.error("Please enter a chemical name.")
     else:
-        chembl_id, smiles = fetch_chembl_info(chemical_name.strip())
-        if chembl_id is None:
-            st.error("❌ Chemical not found in ChEMBL")
+        # Fetch molecule from ChEMBL
+        molecule = new_client.molecule
+        res = molecule.filter(pref_name__iexact=chem_name).only(['molecule_chembl_id', 'pref_name', 'molecule_properties'])
+        
+        if len(res) == 0:
+            st.error(f"No molecule found for '{chem_name}'.")
         else:
-            st.success(f"Found: {chemical_name.upper()}")
-            st.write(f"**ChEMBL ID:** {chembl_id}")
-            st.write(f"**SMILES:** {smiles}")
-
-            descriptors = compute_descriptors(smiles)
-            if descriptors:
-                st.subheader("Molecular Properties (RDKit)")
-                st.dataframe(pd.DataFrame(descriptors, index=[0]))
+            mol = res[0]
+            st.success(f"Found: {mol.get('pref_name')}")
+            st.write(f"**ChEMBL ID:** {mol.get('molecule_chembl_id')}")
+            
+            # Show molecular properties
+            props = mol.get('molecule_properties')
+            if props:
+                df_props = pd.DataFrame.from_dict(props, orient='index', columns=['Value'])
+                st.subheader("Molecular Properties (ChEMBL)")
+                st.dataframe(df_props)
             else:
-                st.warning("Could not compute molecular descriptors")
-
-            if model and descriptors:
+                st.info("No molecular properties available.")
+            
+            # --------------------------
+            # Predict activity
+            # --------------------------
+            if model:
                 try:
-                    df_input = pd.DataFrame(descriptors, index=[0])
-                    prediction = model.predict(df_input)[0]
+                    # Use available numeric properties for prediction
+                    feature_cols = [
+                        'full_molweight', 'alogp', 'psa', 'hba', 'hbd'
+                    ]
+                    X = []
+                    for col in feature_cols:
+                        val = props.get(col)
+                        if val is not None:
+                            X.append(float(val))
+                        else:
+                            X.append(0.0)  # missing values = 0
+
+                    pred = model.predict([X])[0]
                     st.subheader("Predicted Activity")
-                    st.write(f"🔹 Activity Score: {prediction:.3f}")
+                    st.write(pred)
                 except Exception as e:
                     st.error(f"Prediction failed: {e}")
             else:
-                st.info("Prediction skipped: no ML model or descriptors available")
+                st.info("ML model not loaded, cannot predict.")
