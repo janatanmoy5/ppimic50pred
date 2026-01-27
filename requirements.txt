@@ -1,5 +1,8 @@
-streamlit
-pandas
-rdkit-pypi
-scikit-learn
+streamlit>=1.33
+pandas>=2.2.3,<2.3
+numpy>=1.26.0,<1.27
+scikit-learn>=1.4.2,<1.5
+rdkit-pypi>=2022.9.5
 joblib
+chembl_webresource_client
+requests
