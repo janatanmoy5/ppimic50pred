@@ -1,11 +1,11 @@
 # Streamlit for the web app
-streamlit==1.25.0
+streamlit
 
 # RDKit for chemistry computations
-rdkit-pypi==2023.9.2
+rdkit-pypi
 
 # ChEMBL client
-chembl-webresource-client==0.10.9
+chembl-webresource-client
 
 # Standard scientific stack
 pandas==2.1.1
