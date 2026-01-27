@@ -1,25 +1,5 @@
-# Streamlit for UI
-streamlit>=1.33
-
-# RDKit for cheminformatics (Python 3.13 compatible wheels available)
-rdkit-pypi>=2025.3.1
-
-# Data processing
-pandas>=2.2.3,<2.3
-numpy>=1.26.0,<1.27
-
-# Machine learning
-scikit-learn>=1.4.2,<1.5
-joblib
-
-# For fetching chemical info from ChEMBL
-chembl_webresource_client
-
-# HTTP requests
+streamlit
+pandas
 requests
-
-# Improved exception logging for Streamlit
-rich>=14.3.1
-markdown-it-py>=4.0.0
-mdurl~=0.1
-pygments>=2.19.2
+scikit-learn
+joblib
