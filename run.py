@@ -1,76 +1,231 @@
 import streamlit as st
+import math
+import requests
 import pandas as pd
-from chembl_webresource_client.new_client import new_client
 import joblib
+import warnings
 import os
+import time
 
-st.set_page_config(page_title="Chemical Activity Predictor", layout="centered")
+from sklearn.metrics import r2_score
+from sklearn.exceptions import InconsistentVersionWarning
 
-st.title("Chemical Activity Predictor")
-st.write("Enter a chemical name to fetch details and predict activity.")
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 
-# --------------------------
-# Load ML model
-# --------------------------
-MODEL_PATH = "ml_model.pkl"
+# ================= RDKit =================
+try:
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem import Descriptors
+    RDLogger.DisableLog("rdApp.*")
+    RDKit_AVAILABLE = True
+except Exception:
+    RDKit_AVAILABLE = False
 
-if os.path.exists(MODEL_PATH):
-    model = joblib.load(MODEL_PATH)
-    st.success("✅ ML model loaded")
-else:
-    model = None
-    st.warning("⚠️ ML model not found. Predictions will not work.")
+# ================= CONFIG =================
+BASE_DIR = os.path.dirname(__file__)
+MODEL_PATH = os.path.join(BASE_DIR, "random_forest_model.pkl")
 
-# --------------------------
-# Input chemical
-# --------------------------
-chem_name = st.text_input("Chemical Name", "")
+# ================= FALLBACK COMPOUNDS =================
+LOCAL_COMPOUNDS = {
+    "aspirin": "CC(=O)OC1=CC=CC=C1C(=O)O",
+    "acetaminophen": "CC(=O)NC1=CC=C(C=C1)O",
+    "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
+}
 
-if st.button("Search"):
-    if chem_name.strip() == "":
-        st.error("Please enter a chemical name.")
+# ================= UTILITIES =================
+def is_chembl_id(x: str) -> bool:
+    return x.upper().startswith("CHEMBL")
+
+def is_valid_smiles(smiles: str) -> bool:
+    if not RDKit_AVAILABLE:
+        return False
+    return Chem.MolFromSmiles(smiles) is not None
+
+def safe_get(url, retries=3, timeout=10):
+    for _ in range(retries):
+        try:
+            r = requests.get(url, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except requests.RequestException:
+            time.sleep(1)
+    return None
+
+# ================= ChEMBL RESOLUTION =================
+def chembl_name_to_smiles(name):
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/search?q={name}&format=json"
+    r = safe_get(url)
+    if not r:
+        return None, None
+
+    mols = r.json().get("molecules", [])
+    if not mols:
+        return None, None
+
+    m = mols[0]
+    return (
+        m.get("molecule_chembl_id"),
+        m.get("molecule_structures", {}).get("canonical_smiles")
+    )
+
+def chembl_id_to_smiles(chembl_id):
+    url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
+    r = safe_get(url)
+    if not r:
+        return None
+    return r.json().get("molecule_structures", {}).get("canonical_smiles")
+
+# ================= DESCRIPTORS =================
+def compute_descriptors(smiles):
+    if not RDKit_AVAILABLE:
+        st.error("RDKit is not available in this environment.")
+        return None
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+
+    desc = {}
+    for name, fn in Descriptors.descList:
+        try:
+            desc[name] = fn(mol)
+        except Exception:
+            desc[name] = 0.0
+
+    return desc
+
+# ================= INPUT PIPELINE =================
+def process_input(user_input):
+    user_input = user_input.strip()
+    smiles = None
+    chembl_id = None
+    cname = None
+
+    # Local dictionary
+    if user_input.lower() in LOCAL_COMPOUNDS:
+        smiles = LOCAL_COMPOUNDS[user_input.lower()]
+        cname = user_input
+
+    # ChEMBL ID
+    elif is_chembl_id(user_input):
+        chembl_id = user_input.upper()
+        smiles = chembl_id_to_smiles(chembl_id)
+
+    # SMILES
+    elif is_valid_smiles(user_input):
+        smiles = user_input
+
+    # Name search
     else:
-        # Fetch molecule from ChEMBL
-        molecule = new_client.molecule
-        res = molecule.filter(pref_name__iexact=chem_name).only(['molecule_chembl_id', 'pref_name', 'molecule_properties'])
-        
-        if len(res) == 0:
-            st.error(f"No molecule found for '{chem_name}'.")
-        else:
-            mol = res[0]
-            st.success(f"Found: {mol.get('pref_name')}")
-            st.write(f"**ChEMBL ID:** {mol.get('molecule_chembl_id')}")
-            
-            # Show molecular properties
-            props = mol.get('molecule_properties')
-            if props:
-                df_props = pd.DataFrame.from_dict(props, orient='index', columns=['Value'])
-                st.subheader("Molecular Properties (ChEMBL)")
-                st.dataframe(df_props)
-            else:
-                st.info("No molecular properties available.")
-            
-            # --------------------------
-            # Predict activity
-            # --------------------------
-            if model:
-                try:
-                    # Use available numeric properties for prediction
-                    feature_cols = [
-                        'full_molweight', 'alogp', 'psa', 'hba', 'hbd'
-                    ]
-                    X = []
-                    for col in feature_cols:
-                        val = props.get(col)
-                        if val is not None:
-                            X.append(float(val))
-                        else:
-                            X.append(0.0)  # missing values = 0
+        chembl_id, smiles = chembl_name_to_smiles(user_input)
+        cname = user_input
 
-                    pred = model.predict([X])[0]
-                    st.subheader("Predicted Activity")
-                    st.write(pred)
-                except Exception as e:
-                    st.error(f"Prediction failed: {e}")
-            else:
-                st.info("ML model not loaded, cannot predict.")
+    if not smiles:
+        st.error("❌ Could not resolve compound to a valid SMILES.")
+        return None, None, None
+
+    desc = compute_descriptors(smiles)
+    if not desc:
+        st.error("❌ RDKit failed to compute descriptors.")
+        return None, None, None
+
+    desc["smiles"] = smiles
+    desc["chembl_id"] = chembl_id
+
+    return desc, chembl_id, cname
+
+# ================= EXPERIMENTAL DATA =================
+from chembl_webresource_client.new_client import new_client
+
+def get_top_ic50_values(chembl_id, top_n=3):
+    if not chembl_id:
+        return []
+
+    try:
+        acts = new_client.activity.filter(
+            molecule_chembl_id=chembl_id,
+            standard_type="IC50"
+        )
+    except Exception:
+        return []
+
+    rows = []
+    for a in acts:
+        try:
+            val = float(a.get("standard_value"))
+            log_val = math.log10(val) if val > 0 else None
+        except Exception:
+            continue
+
+        rows.append({
+            "IC50": val,
+            "Units": a.get("standard_units"),
+            "pChEMBL": a.get("pchembl_value"),
+            "log(IC50)": log_val,
+            "Target": a.get("target_chembl_id")
+        })
+
+    rows.sort(key=lambda x: x["pChEMBL"] or 0, reverse=True)
+    return rows[:top_n]
+
+# ================= PREDICTION =================
+def predict_ic50(desc):
+    df = pd.DataFrame([desc])
+
+    drop_cols = [
+        "chembl_id", "smiles",
+        "NumRadicalElectrons",
+        "fr_azide", "fr_diazo",
+        "fr_nitroso", "fr_quatN"
+    ]
+    df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
+
+    saved = joblib.load(MODEL_PATH)
+    model = saved["model"]
+    scaler = saved["scaler"]
+
+    X = scaler.transform(df)
+    log_pred = model.predict(X)[0]
+
+    r2 = saved.get("r2", None)
+    if r2 is None and "X_train" in saved:
+        Xtr = scaler.transform(saved["X_train"])
+        r2 = r2_score(saved["y_train"], model.predict(Xtr))
+
+    return log_pred, r2
+
+# ================= STREAMLIT UI =================
+st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
+st.title("⚗️ PPIM-IC50Pred")
+
+if not RDKit_AVAILABLE:
+    st.error("RDKit is not available. This app cannot run.")
+    st.stop()
+
+user_input = st.text_input(
+    "Enter compound name, ChEMBL ID, or SMILES",
+    placeholder="aspirin | CHEMBL25 | CC(=O)OC1=CC=CC=C1C(=O)O"
+)
+
+if user_input:
+    desc, chembl_id, cname = process_input(user_input)
+
+    if desc:
+        st.subheader("Compound")
+        st.write("**Name:**", cname or "Unknown")
+        st.write("**ChEMBL ID:**", chembl_id or "N/A")
+        st.write("**SMILES:**", desc["smiles"])
+
+        log_ic50, r2 = predict_ic50(desc)
+
+        st.subheader("Prediction")
+        st.success(f"Predicted log(IC50): **{log_ic50:.4f}**")
+        if r2:
+            st.caption(f"Model R²: {r2:.3f}")
+
+        exp = get_top_ic50_values(chembl_id)
+        if exp:
+            st.subheader("Experimental IC50 (ChEMBL)")
+            st.dataframe(pd.DataFrame(exp))
+        else:
+            st.info("No experimental IC50 data found.")
