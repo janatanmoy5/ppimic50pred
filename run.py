@@ -25,6 +25,55 @@ LOCAL_COMPOUNDS = {
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
 }
 
+# ---------------- PAGE DESIGN ---------------- #
+
+st.set_page_config(
+    page_title="PPIM‑IC50Pred",
+    page_icon="🜁",  # Benzene ring symbol
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #f4f6f9;
+    }
+    .main-header {
+        background: linear-gradient(90deg, #1f77b4, #4fa3d1);
+        padding: 25px;
+        border-radius: 10px;
+        text-align: center;
+        color: white;
+        margin-bottom: 20px;
+    }
+    .card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        margin-bottom: 20px;
+    }
+    .footer {
+        text-align: center;
+        color: gray;
+        margin-top: 40px;
+        padding: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header Banner with Benzene Ring Image
+st.markdown("""
+<div class="main-header">
+    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Benzene_structure.svg/240px-Benzene_structure.svg.png"
+         width="90">
+    <h1>PPIM‑IC50Pred Webserver</h1>
+    <h3>Machine Learning Based IC50 Prediction</h3>
+</div>
+""", unsafe_allow_html=True)
+
 # ---------------- Utility Functions ---------------- #
 
 def is_chembl_id(s):
@@ -185,46 +234,64 @@ def predict_ic50(descriptor_dict, model_path):
 
     return log_pred, confidence
 
-# ---------------- Streamlit Interface ---------------- #
+# ---------------- MAIN UI ---------------- #
 
-st.set_page_config(page_title="PPIM-IC50Pred", layout="wide")
-st.title("⚗️ PPIM-IC50Pred Webserver")
-
-user_input = st.text_input("Enter chemical name, ChEMBL ID, or SMILES:")
+st.sidebar.header("Input")
+user_input = st.sidebar.text_input("Enter chemical name, ChEMBL ID, or SMILES:")
 
 if user_input:
     descriptors, chembl_id, compound_name = process_input(user_input)
 
     if descriptors:
-        st.subheader("Compound Details")
-        st.markdown(f"**Compound Name:** {compound_name if compound_name else 'Unknown'}")
-        st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
-        st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
-        st.subheader("2D Structure Visualization")
-        mol = Chem.MolFromSmiles(descriptors['smiles'])
-        if mol:
-            img = Draw.MolToImage(mol, size=(300, 300))
-            st.image(img, caption=f"{compound_name if compound_name else chembl_id}")
-        else:
-            st.warning("Could not render molecular structure.")
+        tab1, tab2, tab3 = st.tabs(["Compound", "Prediction", "Experimental Data"])
 
-        st.subheader("Prediction Details")
-        log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-        st.markdown(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
-        if conf is not None:
-            st.markdown(f"**Model Confidence (R²):** {conf:.4f}")
+        # --- Compound Tab ---
+        with tab1:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Compound Details")
+            st.markdown(f"**Name:** {compound_name if compound_name else 'Unknown'}")
+            st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
+            st.markdown(f"**SMILES:** {descriptors['smiles']}")
 
-        exp_entries = get_top_ic50_values(chembl_id, top_n=3)
-        if exp_entries:
-            st.subheader("Experimental IC50 Values from ChEMBL")
-            for i, e in enumerate(exp_entries, 1):
-                exp_log_ic50 = float(e['log10_ic50'])
-                diff_val = log_val - exp_log_ic50
-                st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-                st.markdown(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
-                st.markdown(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
-                st.markdown(f"- log(IC50): {exp_log_ic50:.4f}")
-                st.markdown(f"- Difference: {diff_val:.4f} nM")
-        else:
-            st.info("No experimental IC50 values found.")
+            mol = Chem.MolFromSmiles(descriptors['smiles'])
+            if mol:
+                img = Draw.MolToImage(mol, size=(300, 300))
+                st.image(img, caption="2D Structure")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- Prediction Tab ---
+        with tab2:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Prediction Results")
+            log_val, conf = predict_ic50(descriptors, MODEL_PATH)
+            st.markdown(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
+            if conf is not None:
+                st.markdown(f"**Model Confidence (R²):** {conf:.4f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- Experimental Data Tab ---
+        with tab3:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.subheader("Experimental IC50 Values")
+            exp_entries = get_top_ic50_values(chembl_id, top_n=3)
+            if exp_entries:
+                for i, e in enumerate(exp_entries, 1):
+                    exp_log_ic50 = float(e['log10_ic50'])
+                    diff_val = log_val - exp_log_ic50
+                    st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
+                    st.markdown(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
+                    st.markdown(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
+                    st.markdown(f"- log(IC50): {exp_log_ic50:.4f}")
+                    st.markdown(f"- Difference: {diff_val:.4f} nM")
+                    st.markdown("---")
+            else:
+                st.info("No experimental IC50 values found.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+# Footer
+st.markdown("""
+<div class="footer">
+Designed by <b>Tanmoy Jana</b> — 2026
+</div>
+""", unsafe_allow_html=True)
