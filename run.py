@@ -25,56 +25,80 @@ LOCAL_COMPOUNDS = {
     "ibuprofen": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"
 }
 
-# ---------------- PAGE DESIGN ---------------- #
+# ---------------- PAGE CONFIG ---------------- #
 
 st.set_page_config(
     page_title="PPIM‑IC50Pred",
-    page_icon="🜁",  # Benzene ring symbol
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_icon="🧬",
+    layout="wide"
 )
 
-# Custom CSS
+# ---------------- RESPONSIVE PUBCHEM‑STYLE CSS ---------------- #
+
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #f4f6f9;
-    }
-    .main-header {
-        background: linear-gradient(90deg, #1f77b4, #4fa3d1);
-        padding: 25px;
-        border-radius: 10px;
-        text-align: center;
-        color: white;
-        margin-bottom: 20px;
-    }
-    .card {
-        background: white;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #ddd;
-        margin-bottom: 20px;
-    }
-    .footer {
-        text-align: center;
-        color: gray;
-        margin-top: 40px;
-        padding: 10px;
-    }
+
+.stApp {
+    background-color: #ffffff;
+    font-family: "Segoe UI", sans-serif;
+}
+
+/* Header */
+.header-box {
+    background-color: #1f77b4;
+    padding: 2rem;
+    border-radius: 6px;
+    color: white;
+    margin-bottom: 2rem;
+    text-align: center;
+}
+
+/* Section title */
+.section-title {
+    font-size: 1.7rem;
+    font-weight: 600;
+    color: #1f4e79;
+    margin-top: 1.5rem;
+    margin-bottom: 0.8rem;
+}
+
+/* Card */
+.card {
+    background: #f8f9fb;
+    padding: 1.5rem;
+    border-radius: 6px;
+    border: 1px solid #dce3eb;
+    margin-bottom: 1.5rem;
+}
+
+/* Responsive image */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Footer */
+.footer {
+    text-align: center;
+    color: #777;
+    margin-top: 3rem;
+    padding: 1rem;
+    font-size: 0.9rem;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-# Header Banner with Benzene Ring Image
+# ---------------- HEADER ---------------- #
+
 st.markdown("""
-<div class="main-header">
-    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Benzene_structure.svg/240px-Benzene_structure.svg.png"
-         width="90">
-    <h1>PPIM‑IC50Pred Webserver</h1>
-    <h3>Machine Learning Based IC50 Prediction</h3>
+<div class="header-box">
+    <h1 style="margin-bottom:0;">PPIM‑IC50Pred</h1>
+    <h3 style="margin-top:5px;">IC50 Prediction Server</h3>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- Utility Functions ---------------- #
+# ---------------- FUNCTIONS ---------------- #
 
 def is_chembl_id(s):
     return s.upper().startswith("CHEMBL")
@@ -163,8 +187,6 @@ def process_input(user_input):
     descriptors["smiles"] = smiles
     return descriptors, chembl_id, compound_name
 
-# ---------------- Experimental Data ---------------- #
-
 def get_top_ic50_values(chembl_id, top_n=3):
     if not chembl_id:
         return []
@@ -206,8 +228,6 @@ def get_top_ic50_values(chembl_id, top_n=3):
     valid.sort(key=lambda x: x['pchembl_value'], reverse=True)
     return valid[:top_n]
 
-# ---------------- Prediction ---------------- #
-
 def predict_ic50(descriptor_dict, model_path):
     df = pd.DataFrame([descriptor_dict])
     cols_to_drop = [
@@ -236,60 +256,60 @@ def predict_ic50(descriptor_dict, model_path):
 
 # ---------------- MAIN UI ---------------- #
 
-st.sidebar.header("Input")
-user_input = st.sidebar.text_input("Enter chemical name, ChEMBL ID, or SMILES:")
+st.markdown('<div class="section-title">Search Compound</div>', unsafe_allow_html=True)
+
+user_input = st.text_input("Enter chemical name, ChEMBL ID, or SMILES:")
 
 if user_input:
     descriptors, chembl_id, compound_name = process_input(user_input)
 
     if descriptors:
 
-        tab1, tab2, tab3 = st.tabs(["Compound", "Prediction", "Experimental Data"])
+        st.markdown('<div class="section-title">Compound Summary</div>', unsafe_allow_html=True)
 
-        # --- Compound Tab ---
-        with tab1:
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Compound Details")
-            st.markdown(f"**Name:** {compound_name if compound_name else 'Unknown'}")
-            st.markdown(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
-            st.markdown(f"**SMILES:** {descriptors['smiles']}")
-
             mol = Chem.MolFromSmiles(descriptors['smiles'])
             if mol:
-                img = Draw.MolToImage(mol, size=(300, 300))
-                st.image(img, caption="2D Structure")
+                img = Draw.MolToImage(mol, size=(250, 250))
+                st.image(img, caption="Structure", use_column_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # --- Prediction Tab ---
-        with tab2:
+        with col2:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Prediction Results")
-            log_val, conf = predict_ic50(descriptors, MODEL_PATH)
-            st.markdown(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
-            if conf is not None:
-                st.markdown(f"**Model Confidence (R²):** {conf:.4f}")
+            st.write(f"**Name:** {compound_name if compound_name else 'Unknown'}")
+            st.write(f"**ChEMBL ID:** {chembl_id if chembl_id else 'N/A'}")
+            st.write(f"**SMILES:** {descriptors['smiles']}")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # --- Experimental Data Tab ---
-        with tab3:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.subheader("Experimental IC50 Values")
-            exp_entries = get_top_ic50_values(chembl_id, top_n=3)
-            if exp_entries:
-                for i, e in enumerate(exp_entries, 1):
-                    exp_log_ic50 = float(e['log10_ic50'])
-                    diff_val = log_val - exp_log_ic50
-                    st.markdown(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
-                    st.markdown(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
-                    st.markdown(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
-                    st.markdown(f"- log(IC50): {exp_log_ic50:.4f}")
-                    st.markdown(f"- Difference: {diff_val:.4f} nM")
-                    st.markdown("---")
-            else:
-                st.info("No experimental IC50 values found.")
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Prediction</div>', unsafe_allow_html=True)
 
-# Footer
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        log_val, conf = predict_ic50(descriptors, MODEL_PATH)
+        st.write(f"**Predicted log(IC50) [nM]:** {log_val:.4f}")
+        if conf is not None:
+            st.write(f"**Model Confidence (R²):** {conf:.4f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="section-title">Experimental IC50 Data</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        exp_entries = get_top_ic50_values(chembl_id, top_n=3)
+        if exp_entries:
+            for i, e in enumerate(exp_entries, 1):
+                st.write(f"**#{i} Target:** {e['target_name']} ({e['target_id']})")
+                st.write(f"- IC50: {float(e['ic50_value']):.4f} {e['units']}")
+                st.write(f"- pChEMBL: {float(e['pchembl_value']):.4f}")
+                st.write(f"- log(IC50): {float(e['log10_ic50']):.4f}")
+                st.write("---")
+        else:
+            st.info("No experimental IC50 values found.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------------- FOOTER ---------------- #
+
 st.markdown("""
 <div class="footer">
 Designed by <b>Tanmoy Jana</b> — 2026
