@@ -8,6 +8,8 @@ from sklearn.metrics import r2_score
 import joblib
 import warnings
 import os
+import requests
+import urllib
 
 # ---------------- Setup ---------------- #
 warnings.filterwarnings("ignore")
@@ -26,30 +28,54 @@ def is_smiles(s: str) -> bool:
 def is_chembl_id(s: str) -> bool:
     return s.upper().startswith("CHEMBL")
 
-# ---------------- PubChemPy Resolver ---------------- #
+# ---------------- Robust PubChem + ChEMBL Resolver ---------------- #
 
 def resolve_name_to_smiles(name: str):
-    """Use PubChemPy to resolve chemical names to SMILES."""
+    """
+    Resolve chemical name to SMILES using PubChemPy and ChEMBL fallback.
+    """
     name = normalize_name(name)
-    # Try exact name
+
+    # 1) PubChem exact name search
     try:
         compounds = pcp.get_compounds(name, 'name')
         if compounds:
             return compounds[0].canonical_smiles
-    except Exception:
+    except:
         pass
-    # Try synonyms
+
+    # 2) PubChem synonym search
     try:
         compounds = pcp.get_compounds(name, 'synonym')
         if compounds:
             return compounds[0].canonical_smiles
-    except Exception:
+    except:
         pass
+
+    # 3) PubChem formula / similarity search
+    try:
+        compounds = pcp.get_compounds(name, 'formula')
+        if compounds:
+            return compounds[0].canonical_smiles
+    except:
+        pass
+
+    # 4) ChEMBL pref_name fallback
+    try:
+        chembl_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule.json?pref_name={urllib.parse.quote(name)}"
+        r = requests.get(chembl_url, timeout=10)
+        if r.status_code == 200:
+            mols = r.json().get("molecules", [])
+            if mols:
+                smi = mols[0].get("molecule_structures", {}).get("canonical_smiles")
+                if smi:
+                    return smi
+    except:
+        pass
+
     return None
 
 # ---------------- ChEMBL Functions ---------------- #
-
-import requests
 
 def chembl_get_smiles_from_id(chembl_id: str):
     url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{chembl_id}.json"
@@ -59,7 +85,7 @@ def chembl_get_smiles_from_id(chembl_id: str):
     return r.json().get("molecule_structures", {}).get("canonical_smiles")
 
 def chembl_substructure_search(smiles: str, max_hits: int = 20):
-    smiles_enc = requests.utils.quote(smiles)
+    smiles_enc = urllib.parse.quote(smiles)
     url = f"https://www.ebi.ac.uk/chembl/api/data/substructure?smiles={smiles_enc}&limit={max_hits}"
     r = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
     if r.status_code != 200:
@@ -164,7 +190,6 @@ def process_input(user_input: str):
     if not smiles:
         return None, []
 
-    # Get ChEMBL IDs from SMILES (substructure search)
     ids = chembl_substructure_search(smiles)
     chembl_ids = list(set(chembl_ids + ids))
     return smiles, chembl_ids
@@ -199,7 +224,7 @@ st.markdown("---")
 
 user_input = st.text_input(
     "Enter SMILES, ChEMBL ID, or chemical name:",
-    placeholder="Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O"
+    placeholder="Nutlin, Nutlin-3a, CHEMBL1201733, CC(=O)OC1=CC=CC=C1C(=O)O"
 )
 
 if user_input:
