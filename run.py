@@ -419,6 +419,21 @@ def predict_ic50(descriptor_dict, model_path):
     confidence = saved.get("r2", None)
     return log_pred, confidence
 
+# ---------------- Per-row impression (log-scale) ---------------- #
+def row_impression(pred_log, exp_log):
+    if exp_log is None:
+        return "N/A"
+    delta_log = pred_log - exp_log
+    fold = 10 ** abs(delta_log)
+    percent = (fold - 1) * 100
+    if abs(delta_log) < 0.3:
+        label = "moderate"
+    elif delta_log > 0:
+        label = "weaker"
+    else:
+        label = "stronger"
+    return f"{label}: Δlog={delta_log:.4f}, ~{fold:.1f}× ({percent:.1f}%)"
+
 # ---------------- Log-scale potency interpretation ---------------- #
 def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
     if exp_log is None:
@@ -522,6 +537,14 @@ if user_input:
         df_ic50_display = df_ic50.copy()
         df_ic50_display["IC50 (nM)"] = df_ic50_display["ic50_value"]
         df_ic50_display["log10(IC50)"] = df_ic50_display["log10_ic50"]
+
+        # NEW: per-row impression column
+        impressions = []
+        for _, row in df_ic50_display.iterrows():
+            exp_log = row["log10_ic50"]
+            impressions.append(row_impression(log_val, exp_log))
+        df_ic50_display["Impression"] = impressions
+
         df_ic50_display = df_ic50_display[
             [
                 "chembl_id",
@@ -533,6 +556,7 @@ if user_input:
                 "units",
                 "pchembl_value",
                 "log10(IC50)",
+                "Impression",
                 "assay_type",
             ]
         ]
