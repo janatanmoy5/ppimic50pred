@@ -252,6 +252,7 @@ def chembl_get_ic50_for_molecule(chembl_id: str, top_n: int = 5):
         try:
             val_num = float(val)
             log10_val = math.log10(val_num) if val_num > 0 else None
+            pchembl_val = float(pchembl)
         except Exception:
             continue
 
@@ -275,7 +276,7 @@ def chembl_get_ic50_for_molecule(chembl_id: str, top_n: int = 5):
                 "chembl_id": chembl_id,
                 "ic50_value": val_num,
                 "units": units,
-                "pchembl_value": float(pchembl),
+                "pchembl_value": pchembl_val,
                 "log10_ic50": log10_val,
                 "target_name": target_name,
                 "target_id": tid,
@@ -371,7 +372,6 @@ def process_input(user_input: str):
     # 3) SMILES directly
     if is_smiles(raw):
         smiles = raw
-        # similarity + substructure to collect multiple ChEMBL IDs
         sim_ids = chembl_similarity_search(smiles, threshold=90)
         sub_ids = chembl_substructure_search(smiles)
         chembl_ids.update(sim_ids)
@@ -419,32 +419,29 @@ def predict_ic50(descriptor_dict, model_path):
     confidence = saved.get("r2", None)
     return log_pred, confidence
 
-# ---------------- Potency comparison ---------------- #
-def compare_potency(pred_nM, exp_nM, units: str):
-    if exp_nM <= 0:
-        return "Experimental IC50 value is non-positive; comparison not meaningful."
+# ---------------- Log-scale potency interpretation ---------------- #
+def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
+    if exp_log is None:
+        return "Experimental log(IC50) unavailable."
 
-    ratio = pred_nM / exp_nM
+    delta_log = pred_log - exp_log
+    fold = 10 ** abs(delta_log)
 
-    if 0.5 <= ratio <= 2.0:
-        return (
-            f"Model prediction is in good agreement with experimental IC50 "
-            f"({pred_nM:.2f} {units} vs {exp_nM:.2f} {units}); moderate difference."
+    if abs(delta_log) < 0.3:
+        comment = "Model prediction is in close agreement (within ~2-fold)."
+    elif delta_log > 0:
+        comment = (
+            f"Model underestimates potency by {delta_log:.2f} log units "
+            f"(~{fold:.1f}-fold weaker than experiment)."
         )
-    if ratio > 2.0:
-        return (
-            f"Model underestimates potency (predicts weaker activity): "
-            f"predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
+    else:
+        comment = (
+            f"Model overestimates potency by {abs(delta_log):.2f} log units "
+            f"(~{fold:.1f}-fold stronger than experiment)."
         )
-    if ratio < 0.5:
-        return (
-            f"Model overestimates potency (predicts stronger activity): "
-            f"predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
-        )
-    return (
-        f"Model and experimental IC50 differ (predicted {pred_nM:.2f} {units} "
-        f"vs experimental {exp_nM:.2f} {units})."
-    )
+
+    detail = f"Predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
+    return f"{comment} {detail}"
 
 # ---------------- Streamlit UI ---------------- #
 st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
@@ -477,7 +474,6 @@ if user_input:
     if chembl_ids:
         descriptors["chembl_id"] = chembl_ids[0]
 
-    # ----- Layout for all devices -----
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -487,7 +483,10 @@ if user_input:
             st.markdown(f"**PubChem CID:** {pubchem_meta.get('cid', 'N/A')}")
             st.markdown(f"**Formula:** {pubchem_meta.get('formula', 'N/A')}")
             st.markdown(f"**InChIKey:** {pubchem_meta.get('inchikey', 'N/A')}")
-        st.markdown(f"**Primary ChEMBL IDs (similar/substructure):** {', '.join(chembl_ids) if chembl_ids else 'N/A'}")
+        st.markdown(
+            f"**Primary ChEMBL IDs (similar/substructure):** "
+            f"{', '.join(chembl_ids) if chembl_ids else 'N/A'}"
+        )
         st.markdown(f"**SMILES:** `{smiles}`")
 
         if RDKit_AVAILABLE:
@@ -554,14 +553,21 @@ if user_input:
             st.markdown(f"- log10(IC50): `{best_log:.4f}`")
 
         st.markdown("**Predicted vs Experimental (nM + log scale):**")
-        if best_log is not None:
-            diff_log = log_val - best_log
-            st.markdown(f"- Predicted log(IC50): `{log_val:.4f}`")
-            st.markdown(f"- Experimental log(IC50): `{best_log:.4f}`")
-            st.markdown(f"- Δlog(IC50) (pred − exp): `{diff_log:.4f}`")
+        exp_log = best_log if best_log is not None else None
+        pred_log = log_val
 
-        comment = compare_potency(pred_nM, best_ic50, best_units)
-        st.markdown(f"- **Interpretation:** {comment}")
+        if exp_log is not None:
+            delta_log = pred_log - exp_log
+            st.markdown(f"- Predicted log(IC50): `{pred_log:.4f}`")
+            st.markdown(f"- Experimental log(IC50): `{exp_log:.4f}`")
+            st.markdown(f"- Δlog(IC50) (pred − exp): `{delta_log:.4f}`")
+        else:
+            st.markdown("- Experimental log(IC50): `N/A`")
+
+        interpretation = interpret_potency_logscale(
+            pred_log, exp_log, pred_nM, best_ic50, best_units
+        )
+        st.markdown(f"- **Interpretation:** {interpretation}")
 
     st.markdown("---")
     st.subheader("Target Landscape (protein, PPI, cell line, etc.)")
