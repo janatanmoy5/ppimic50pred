@@ -27,6 +27,13 @@ try:
 except ModuleNotFoundError:
     PUBCHEMPY_AVAILABLE = False
 
+# ----------------- py3Dmol (optional, for 3D structures) -----------------
+try:
+    import py3Dmol
+    PY3DMOL_AVAILABLE = True
+except ModuleNotFoundError:
+    PY3DMOL_AVAILABLE = False
+
 # ---------------- CONFIG ---------------- #
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "random_forest_model.pkl")
 
@@ -425,14 +432,13 @@ def row_impression(pred_log, exp_log):
         return "N/A"
     delta_log = pred_log - exp_log
     fold = 10 ** abs(delta_log)
-    percent = (fold - 1) * 100
     if abs(delta_log) < 0.3:
-        label = "moderate"
+        label = "close (≈2‑fold)"
     elif delta_log > 0:
-        label = "weaker"
+        label = "predicted weaker"
     else:
-        label = "stronger"
-    return f"{label}: Δlog={delta_log:.4f}, ~{fold:.1f}× ({percent:.1f}%)"
+        label = "predicted stronger"
+    return f"{label}: Δlog={delta_log:.4f}, ~{fold:.1f}×"
 
 # ---------------- Log-scale potency interpretation ---------------- #
 def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
@@ -472,6 +478,8 @@ user_input = st.text_input(
     "Enter chemical name, ChEMBL ID, or SMILES:",
     placeholder="e.g., Nutlin-3a, CHEMBL211045, CC(=O)OC1=CC=CC=C1C(=O)O",
 )
+
+df_ic50 = None  # to keep in scope for later references
 
 if user_input:
     smiles, chembl_ids, compound_name, pubchem_meta = process_input(user_input)
@@ -538,10 +546,16 @@ if user_input:
         df_ic50_display["IC50 (nM)"] = df_ic50_display["ic50_value"]
         df_ic50_display["log10(IC50)"] = df_ic50_display["log10_ic50"]
 
-        # NEW: per-row impression column
+        # Predicted log(IC50) column (same prediction for all rows)
+        df_ic50_display["Predicted log(IC50)"] = log_val
+
+        # Improved per-row impression column (low IC50 emphasis)
         impressions = []
         for _, row in df_ic50_display.iterrows():
             exp_log = row["log10_ic50"]
+            if exp_log is None:
+                impressions.append("N/A")
+                continue
             impressions.append(row_impression(log_val, exp_log))
         df_ic50_display["Impression"] = impressions
 
@@ -556,6 +570,7 @@ if user_input:
                 "units",
                 "pchembl_value",
                 "log10(IC50)",
+                "Predicted log(IC50)",
                 "Impression",
                 "assay_type",
             ]
@@ -606,3 +621,97 @@ if user_input:
         )
     else:
         st.info("No mechanism/target annotations found in ChEMBL for these molecules.")
+
+    # ---------------- Docking & 3D Structure Section ---------------- #
+    st.markdown("---")
+    st.subheader("Docking Study & 3D Structures")
+
+    st.markdown(
+        "This section connects predicted/experimental IC50 data with structural information "
+        "that can be used for molecular docking studies."
+    )
+
+    best_target_id = None
+    best_target_name = None
+    if df_ic50 is not None and not df_ic50.empty:
+        best_row = df_ic50.sort_values("ic50_value").iloc[0]
+        best_target_id = best_row.get("target_id")
+        best_target_name = best_row.get("target_name")
+
+    if best_target_id:
+        st.markdown(
+            f"- **Most potent target (from ChEMBL IC50):** `{best_target_name}` "
+            f"(`{best_target_id}`)"
+        )
+        rcsb_query = f"https://www.rcsb.org/search?query={best_target_name}"
+        st.markdown(
+            f"- **Search 3D structures for this target (RCSB PDB):** "
+            f"[Open RCSB search]({rcsb_query})"
+        )
+    else:
+        st.markdown(
+            "- No specific target with experimental IC50 identified; docking targets "
+            "would need to be selected manually."
+        )
+
+    st.markdown(
+        "To perform an actual docking study, you typically:\n"
+        "1. Obtain a **protein 3D structure** (PDB) for the target.\n"
+        "2. Prepare the **ligand 3D structure** from the SMILES.\n"
+        "3. Use a docking engine (e.g., AutoDock Vina, Smina, Glide) outside this app.\n"
+        "4. Analyze docking scores and poses alongside IC50 predictions."
+    )
+
+    pdb_id = st.text_input(
+        "Optional: Enter a PDB ID to visualize the protein structure (e.g., 4HG7):",
+        value="",
+    )
+
+    if pdb_id:
+        if PY3DMOL_AVAILABLE:
+            try:
+                pdb_url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
+                r = safe_get(pdb_url)
+                if r:
+                    pdb_block = r.text
+                    view = py3Dmol.view(width=500, height=400)
+                    view.addModel(pdb_block, "pdb")
+                    view.setStyle({"cartoon": {"color": "spectrum"}})
+                    view.zoomTo()
+                    view_html = view._make_html()
+                    st.components.v1.html(view_html, height=420, scrolling=False)
+                else:
+                    st.info("Could not download PDB file for the given ID.")
+            except Exception:
+                st.info("3D visualization failed for this PDB ID.")
+        else:
+            st.info(
+                "py3Dmol is not installed; 3D visualization is disabled. "
+                "Install py3Dmol to enable in-app structure viewing."
+            )
+
+    # ---------------- Chemical References & Notes ---------------- #
+    st.markdown("---")
+    st.subheader("Chemical References & Notes")
+
+    st.markdown(
+        "**Yes, ChEMBL provides extensive data linking ligands (small molecules) to "
+        "target proteins (receptors), and it is widely used to obtain the necessary "
+        "3D structures and 2D data for molecular docking studies.**"
+    )
+
+    if df_ic50 is not None and not df_ic50.empty:
+        pubmed_links = []
+        for _, row in df_ic50.iterrows():
+            tid = row.get("target_id")
+            if tid:
+                query = f"https://pubmed.ncbi.nlm.nih.gov/?term={tid}"
+                pubmed_links.append(f"- [{tid} PubMed Search]({query})")
+
+        if pubmed_links:
+            st.markdown("**PubMed References (Target-related):**")
+            st.markdown("\n".join(pubmed_links))
+        else:
+            st.markdown("No PubMed references available for these targets.")
+    else:
+        st.markdown("No experimental IC50/target data available to generate PubMed references.")
