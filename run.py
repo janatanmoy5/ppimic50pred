@@ -6,6 +6,7 @@ import joblib
 import warnings
 import os
 import time
+from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
@@ -105,7 +106,6 @@ def pubchem_autocomplete_name(name: str):
     return r.json().get("dictionary_terms", {}).get("compound", [])
 
 def resolve_name_to_pubchem(name: str):
-    # Try PubChemPy first if available
     if PUBCHEMPY_AVAILABLE:
         try:
             comps = pcp.get_compounds(name, "name")
@@ -121,7 +121,6 @@ def resolve_name_to_pubchem(name: str):
         except Exception:
             pass
 
-    # REST: direct name → CID
     cid = pubchem_name_to_cid_rest(name)
     if cid:
         props = pubchem_cid_to_props_rest(cid)
@@ -134,7 +133,6 @@ def resolve_name_to_pubchem(name: str):
                 "iupac": None,
             }
 
-    # REST: synonym search → CID
     cid = pubchem_synonym_to_cid_rest(name)
     if cid:
         props = pubchem_cid_to_props_rest(cid)
@@ -147,7 +145,6 @@ def resolve_name_to_pubchem(name: str):
                 "iupac": None,
             }
 
-    # Variants
     variants = {
         name.strip(),
         name.lower(),
@@ -180,7 +177,6 @@ def resolve_name_to_pubchem(name: str):
                     "iupac": None,
                 }
 
-    # Autocomplete fallback
     suggestions = pubchem_autocomplete_name(name)
     for s in suggestions:
         cid = pubchem_name_to_cid_rest(s)
@@ -361,12 +357,10 @@ def process_input(user_input: str):
     smiles = None
     compound_name = raw
 
-    # 1) Local fallback
     if raw.lower() in LOCAL_COMPOUNDS:
         smiles = LOCAL_COMPOUNDS[raw.lower()]
         return smiles, list(chembl_ids), compound_name, pubchem_meta
 
-    # 2) ChEMBL ID
     if is_chembl_id(raw):
         cid = raw.upper()
         smi = chembl_get_smiles_from_id(cid)
@@ -375,7 +369,6 @@ def process_input(user_input: str):
             chembl_ids.add(cid)
             return smiles, list(chembl_ids), compound_name, pubchem_meta
 
-    # 3) SMILES directly
     if is_smiles(raw):
         smiles = raw
         sim_ids = chembl_similarity_search(smiles, threshold=90)
@@ -384,7 +377,6 @@ def process_input(user_input: str):
         chembl_ids.update(sub_ids)
         return smiles, list(chembl_ids), compound_name, pubchem_meta
 
-    # 4) Name → PubChem → SMILES
     meta = resolve_name_to_pubchem(raw)
     if meta and meta.get("smiles"):
         smiles = meta["smiles"]
@@ -395,7 +387,6 @@ def process_input(user_input: str):
         chembl_ids.update(sub_ids)
         return smiles, list(chembl_ids), compound_name, pubchem_meta
 
-    # 5) Fallback: ChEMBL name search
     cid, smi = chembl_search_name(raw)
     if smi:
         smiles = smi
@@ -463,6 +454,63 @@ def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
     detail = f"Predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
     return f"{comment} {detail}"
 
+# ---------------- RCSB / PDB helpers ---------------- #
+def rcsb_search_ligand(chemical_name, max_rows=100):
+    """Search PDB for any structure containing the chemical name."""
+    query = {
+        "query": {
+            "type": "terminal",
+            "service": "full_text",
+            "parameters": {"value": chemical_name}
+        },
+        "return_type": "entry",
+        "request_options": {
+            "paginate": {"start": 0, "rows": max_rows},
+            "results_content_type": ["experimental"]
+        }
+    }
+    url = "https://search.rcsb.org/rcsbsearch/v2/query?json="
+    r = safe_get(url, method="POST", json_data=query)
+    if not r:
+        return []
+    data = r.json()
+    return [item["identifier"] for item in data.get("result_set", [])]
+
+def rcsb_get_assembly_info(pdb_id, assembly_id="1"):
+    """Fetch assembly metadata (symmetry, oligomeric state, etc.)."""
+    url = f"https://data.rcsb.org/rest/v1/core/assembly/{pdb_id}/{assembly_id}"
+    r = safe_get(url)
+    if not r:
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+def rcsb_download_url(pdb_id, filetype="pdb"):
+    if filetype == "pdb":
+        return f"https://files.rcsb.org/download/{pdb_id}.pdb"
+    if filetype == "cif":
+        return f"https://files.rcsb.org/download/{pdb_id}.cif"
+    return None
+
+def show_3d_structure(pdb_id):
+    """Display PDB structure using py3Dmol."""
+    if not PY3DMOL_AVAILABLE:
+        st.info("py3Dmol is not installed; 3D visualization is disabled.")
+        return
+    pdb_url = rcsb_download_url(pdb_id, "pdb")
+    r = safe_get(pdb_url)
+    if not r:
+        st.info("Could not download PDB file.")
+        return
+    pdb_data = r.text
+    view = py3Dmol.view(width=600, height=500)
+    view.addModel(pdb_data, "pdb")
+    view.setStyle({"cartoon": {"color": "spectrum"}})
+    view.zoomTo()
+    st.components.v1.html(view._make_html(), height=520, scrolling=False)
+
 # ---------------- Streamlit UI ---------------- #
 st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 st.markdown(
@@ -478,8 +526,7 @@ user_input = st.text_input(
     placeholder="e.g., Nutlin-3a, CHEMBL211045, CC(=O)OC1=CC=CC=C1C(=O)O",
 )
 
-df_ic50 = None  # keep in scope for docking & references
-pubchem_meta = None
+df_ic50 = None
 
 if user_input:
     smiles, chembl_ids, compound_name, pubchem_meta = process_input(user_input)
@@ -546,7 +593,6 @@ if user_input:
         df_ic50_display["IC50 (nM)"] = df_ic50_display["ic50_value"]
         df_ic50_display["log10(IC50)"] = df_ic50_display["log10_ic50"]
 
-        # Impression column only (predicted vs experimental log(IC50))
         impressions = []
         for _, row in df_ic50_display.iterrows():
             exp_log = row["log10_ic50"]
@@ -615,125 +661,75 @@ if user_input:
     else:
         st.info("No mechanism/target annotations found in ChEMBL for these molecules.")
 
-    # ---------------- Docking & 3D Structure Section ---------------- #
+    # ---------------- PDB Structures & Assemblies (Chemical Name Search) ---------------- #
     st.markdown("---")
-    st.subheader("Docking Study & 3D Structures")
+    st.subheader("PDB Structures & Assemblies (Chemical Name Search)")
 
     st.markdown(
-        "This section connects predicted/experimental IC50 data with structural "
-        "information that can be used for molecular docking studies."
+        "Enter any **chemical name** (e.g., Nutlin, Imatinib, Aspirin). "
+        "The app will automatically search the RCSB PDB, fetch matching structures, "
+        "display them in 3D, and extract assembly metadata."
     )
 
-    # Identify most potent target
-    best_target_id = None
-    best_target_name = None
-
-    if df_ic50 is not None and not df_ic50.empty:
-        best_row = df_ic50.sort_values("ic50_value").iloc[0]
-        best_target_id = best_row.get("target_id")
-        best_target_name = best_row.get("target_name")
-
-    # TARGET STRUCTURE LINKS
-    if best_target_id:
-        st.markdown(
-            f"**Most potent target (from ChEMBL IC50):** "
-            f"{best_target_name} ({best_target_id})"
-        )
-
-        chembl_target_url = f"https://www.ebi.ac.uk/chembl/target_report_card/{best_target_id}/"
-        st.markdown(f"- **ChEMBL Target Page:** [{best_target_id}]({chembl_target_url})")
-
-        rcsb_query = f"https://www.rcsb.org/search?query={best_target_name}"
-        st.markdown(
-            f"- **Search 3D structures (RCSB PDB):** "
-            f"[Open RCSB search]({rcsb_query})"
-        )
-
-        uniprot_query = f"https://www.uniprot.org/uniprotkb?query={best_target_name}"
-        st.markdown(f"- **UniProt Search:** [Open UniProt]({uniprot_query})")
-
-        pdbe_query = f"https://www.ebi.ac.uk/pdbe/search/pdb?q={best_target_name}"
-        st.markdown(f"- **PDBe Search:** [Open PDBe]({pdbe_query})")
-    else:
-        st.info("No target with experimental IC50 found.")
-
-    # LIGAND STRUCTURE LINKS (PubChem)
-    if pubchem_meta and pubchem_meta.get("cid"):
-        cid = pubchem_meta["cid"]
-        st.markdown("### Ligand 3D Structures (PubChem)")
-
-        sdf_3d = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/SDF?record_type=3d"
-        st.markdown(f"- **3D SDF Download:** [SDF 3D]({sdf_3d})")
-
-        pdb_3d = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/record/PDB/?record_type=3d"
-        st.markdown(f"- **3D PDB Download:** [PDB 3D]({pdb_3d})")
-
-        viewer = f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}#section=3D-Conformer"
-        st.markdown(f"- **PubChem 3D Viewer:** [Open Viewer]({viewer})")
-    else:
-        st.info("No PubChem CID available for ligand 3D structure links.")
-
-    st.markdown(
-        """
-### How to Perform a Docking Study
-
-1. **Obtain a protein 3D structure (PDB)** for the target.  
-2. **Prepare the ligand 3D structure** from the SMILES (PubChem links above).  
-3. Use a **docking engine** such as AutoDock Vina, Smina, Glide, or GOLD.  
-4. Analyze **docking scores and poses** alongside predicted/experimental IC50 values.
-"""
+    chem_query = st.text_input(
+        "Chemical name for PDB search:",
+        value=compound_name if user_input else "",
     )
 
-    # Optional PDB viewer
-    pdb_id = st.text_input(
-        "Optional: Enter a PDB ID to visualize the protein structure (e.g., 4HG7):",
-        value="",
-    )
+    if chem_query:
+        st.info(f"Searching PDB for ligand: **{chem_query}** ...")
+        pdb_hits = rcsb_search_ligand(chem_query)
 
-    if pdb_id:
-        if PY3DMOL_AVAILABLE:
-            try:
-                pdb_url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-                r = safe_get(pdb_url)
-                if r:
-                    pdb_block = r.text
-                    view = py3Dmol.view(width=500, height=400)
-                    view.addModel(pdb_block, "pdb")
-                    view.setStyle({"cartoon": {"color": "spectrum"}})
-                    view.zoomTo()
-                    st.components.v1.html(view._make_html(), height=420, scrolling=False)
+        if not pdb_hits:
+            st.warning("No PDB structures found for this chemical.")
+        else:
+            st.success(f"Found {len(pdb_hits)} structures containing `{chem_query}`.")
+
+            st.markdown("### Matching PDB IDs")
+            for pid in pdb_hits:
+                st.write(
+                    f"- **{pid}** — "
+                    f"[PDB]({rcsb_download_url(pid,'pdb')}) | "
+                    f"[mmCIF]({rcsb_download_url(pid,'cif')})"
+                )
+
+            selected_pdb = st.selectbox("Select a PDB ID to visualize:", pdb_hits)
+
+            if selected_pdb:
+                st.markdown("### 3D Structure Viewer")
+                show_3d_structure(selected_pdb)
+
+                st.markdown("### Assembly & Symmetry Information")
+                asm = rcsb_get_assembly_info(selected_pdb, assembly_id="1")
+
+                if asm is None:
+                    st.warning("No assembly metadata available.")
                 else:
-                    st.info("Could not download PDB file.")
-            except Exception:
-                st.info("3D visualization failed.")
-        else:
-            st.info(
-                "py3Dmol is not installed; 3D visualization is disabled. "
-                "Install py3Dmol to enable in-app structure viewing."
-            )
+                    info = asm.get("rcsb_assembly_info", {})
+                    sym = asm.get("rcsb_struct_symmetry", [])
 
-    # ---------------- Chemical References & Notes ---------------- #
-    st.markdown("---")
-    st.subheader("Chemical References & Notes")
+                    st.write(f"**Entry ID:** {info.get('entry_id','N/A').strip()}")
+                    st.write(
+                        f"**Polymer Composition:** "
+                        f"{info.get('polymer_composition','N/A').strip()}"
+                    )
+                    st.write(
+                        f"**Selected Polymer Types:** "
+                        f"{info.get('selected_polymer_entity_types','N/A').strip()}"
+                    )
+                    st.write(
+                        f"**Buried Surface Area:** "
+                        f"{info.get('total_assembly_buried_surface_area','N/A')}"
+                    )
 
-    st.markdown(
-        "**Yes, ChEMBL provides extensive data linking ligands (small molecules) to "
-        "target proteins (receptors), and it is widely used to obtain the necessary "
-        "3D structures and 2D data for molecular docking studies.**"
-    )
-
-    if df_ic50 is not None and not df_ic50.empty:
-        pubmed_links = []
-        for _, row in df_ic50.iterrows():
-            tid = row.get("target_id")
-            if tid:
-                query = f"https://pubmed.ncbi.nlm.nih.gov/?term={tid}"
-                pubmed_links.append(f"- [{tid} PubMed Search]({query})")
-
-        if pubmed_links:
-            st.markdown("**PubMed References (Target-related):**")
-            st.markdown("\n".join(pubmed_links))
-        else:
-            st.markdown("No PubMed references available for these targets.")
-    else:
-        st.markdown("No experimental IC50/target data available to generate PubMed references.")
+                    st.markdown("### Symmetry / Oligomeric State")
+                    if sym:
+                        for s in sym:
+                            st.markdown(
+                                f"- **Kind:** {s.get('kind','N/A').strip()}  \n"
+                                f"  **Type:** {s.get('type','N/A').strip()}  \n"
+                                f"  **Oligomeric State:** {s.get('oligomeric_state','N/A').strip()}  \n"
+                                f"  **Symbol:** {s.get('symbol','N/A').strip()}"
+                            )
+                    else:
+                        st.write("No symmetry annotations available.")
