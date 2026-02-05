@@ -454,27 +454,71 @@ def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
     detail = f"Predicted {pred_nM:.2f} {units} vs experimental {exp_nM:.2f} {units}."
     return f"{comment} {detail}"
 
-# ---------------- RCSB / PDB helpers ---------------- #
-def rcsb_search_ligand(chemical_name, max_rows=100):
-    """Search PDB for any structure containing the chemical name."""
-    query = {
-        "query": {
-            "type": "terminal",
-            "service": "full_text",
-            "parameters": {"value": chemical_name}
-        },
-        "return_type": "entry",
-        "request_options": {
-            "paginate": {"start": 0, "rows": max_rows},
-            "results_content_type": ["experimental"]
-        }
-    }
-    url = "https://search.rcsb.org/rcsbsearch/v2/query?json="
-    r = safe_get(url, method="POST", json_data=query)
+# ---------------- PubChem synonyms for PDB search ---------------- #
+def get_pubchem_synonyms(name):
+    """Return PubChem depositor-supplied synonyms for a chemical name."""
+    # Try PubChemPy first
+    if PUBCHEMPY_AVAILABLE:
+        try:
+            comps = pcp.get_compounds(name, "name")
+            if comps:
+                syns = comps[0].synonyms
+                if syns:
+                    return syns
+        except Exception:
+            pass
+
+    # Fallback: REST by CID
+    cid = pubchem_name_to_cid_rest(name)
+    if not cid:
+        return []
+
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/synonyms/JSON"
+    r = safe_get(url)
     if not r:
         return []
-    data = r.json()
-    return [item["identifier"] for item in data.get("result_set", [])]
+
+    try:
+        return r.json()["InformationList"]["Information"][0]["Synonym"]
+    except Exception:
+        return []
+
+# ---------------- RCSB / PDB helpers ---------------- #
+def rcsb_search_ligand_safe(chemical_name, max_rows=100):
+    """
+    Search PDB using PubChem synonyms to avoid JSONDecodeError when
+    the original brand name is not present in PDB.
+    """
+    synonyms = get_pubchem_synonyms(chemical_name)
+    search_terms = [chemical_name] + synonyms[:20]  # limit synonyms
+
+    url = "https://search.rcsb.org/rcsbsearch/v2/query?json="
+
+    for term in search_terms:
+        query = {
+            "query": {
+                "type": "terminal",
+                "service": "full_text",
+                "parameters": {"value": term}
+            },
+            "return_type": "entry",
+            "request_options": {
+                "paginate": {"start": 0, "rows": max_rows},
+                "results_content_type": ["experimental"]
+            }
+        }
+
+        r = requests.post(url, json=query)
+        try:
+            data = r.json()
+        except Exception:
+            continue
+
+        hits = [item["identifier"] for item in data.get("result_set", [])]
+        if hits:
+            return term, hits
+
+    return None, []
 
 def rcsb_get_assembly_info(pdb_id, assembly_id="1"):
     """Fetch assembly metadata (symmetry, oligomeric state, etc.)."""
@@ -666,9 +710,9 @@ if user_input:
     st.subheader("PDB Structures & Assemblies (Chemical Name Search)")
 
     st.markdown(
-        "Enter any **chemical name** (e.g., Nutlin, Imatinib, Aspirin). "
-        "The app will automatically search the RCSB PDB, fetch matching structures, "
-        "display them in 3D, and extract assembly metadata."
+        "Enter any **chemical name** (e.g., Nutlin, Imatinib, Aspirin, Calpol). "
+        "The app will resolve PubChem synonyms, search the RCSB PDB, fetch matching "
+        "structures, display them in 3D, and extract assembly metadata."
     )
 
     chem_query = st.text_input(
@@ -677,13 +721,15 @@ if user_input:
     )
 
     if chem_query:
-        st.info(f"Searching PDB for ligand: **{chem_query}** ...")
-        pdb_hits = rcsb_search_ligand(chem_query)
+        st.info(f"Searching PDB for ligand (using PubChem synonyms): **{chem_query}** ...")
+        matched_term, pdb_hits = rcsb_search_ligand_safe(chem_query)
 
-        if not pdb_hits:
-            st.warning("No PDB structures found for this chemical.")
+        if not matched_term or not pdb_hits:
+            st.warning("No PDB structures found for this chemical or its synonyms.")
         else:
-            st.success(f"Found {len(pdb_hits)} structures containing `{chem_query}`.")
+            st.success(
+                f"Found {len(pdb_hits)} structures using synonym: **{matched_term}**"
+            )
 
             st.markdown("### Matching PDB IDs")
             for pid in pdb_hits:
