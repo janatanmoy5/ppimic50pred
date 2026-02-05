@@ -6,7 +6,6 @@ import joblib
 import warnings
 import os
 import time
-from sklearn.metrics import r2_score
 from sklearn.exceptions import InconsistentVersionWarning
 
 warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
@@ -479,7 +478,8 @@ user_input = st.text_input(
     placeholder="e.g., Nutlin-3a, CHEMBL211045, CC(=O)OC1=CC=CC=C1C(=O)O",
 )
 
-df_ic50 = None  # to keep in scope for later references
+df_ic50 = None  # keep in scope for docking & references
+pubchem_meta = None
 
 if user_input:
     smiles, chembl_ids, compound_name, pubchem_meta = process_input(user_input)
@@ -546,16 +546,10 @@ if user_input:
         df_ic50_display["IC50 (nM)"] = df_ic50_display["ic50_value"]
         df_ic50_display["log10(IC50)"] = df_ic50_display["log10_ic50"]
 
-        # Predicted log(IC50) column (same prediction for all rows)
-        df_ic50_display["Predicted log(IC50)"] = log_val
-
-        # Improved per-row impression column (low IC50 emphasis)
+        # Impression column only (predicted vs experimental log(IC50))
         impressions = []
         for _, row in df_ic50_display.iterrows():
             exp_log = row["log10_ic50"]
-            if exp_log is None:
-                impressions.append("N/A")
-                continue
             impressions.append(row_impression(log_val, exp_log))
         df_ic50_display["Impression"] = impressions
 
@@ -570,7 +564,6 @@ if user_input:
                 "units",
                 "pchembl_value",
                 "log10(IC50)",
-                "Predicted log(IC50)",
                 "Impression",
                 "assay_type",
             ]
@@ -627,41 +620,71 @@ if user_input:
     st.subheader("Docking Study & 3D Structures")
 
     st.markdown(
-        "This section connects predicted/experimental IC50 data with structural information "
-        "that can be used for molecular docking studies."
+        "This section connects predicted/experimental IC50 data with structural "
+        "information that can be used for molecular docking studies."
     )
 
+    # Identify most potent target
     best_target_id = None
     best_target_name = None
+
     if df_ic50 is not None and not df_ic50.empty:
         best_row = df_ic50.sort_values("ic50_value").iloc[0]
         best_target_id = best_row.get("target_id")
         best_target_name = best_row.get("target_name")
 
+    # TARGET STRUCTURE LINKS
     if best_target_id:
         st.markdown(
-            f"- **Most potent target (from ChEMBL IC50):** `{best_target_name}` "
-            f"(`{best_target_id}`)"
+            f"**Most potent target (from ChEMBL IC50):** "
+            f"{best_target_name} ({best_target_id})"
         )
+
+        chembl_target_url = f"https://www.ebi.ac.uk/chembl/target_report_card/{best_target_id}/"
+        st.markdown(f"- **ChEMBL Target Page:** [{best_target_id}]({chembl_target_url})")
+
         rcsb_query = f"https://www.rcsb.org/search?query={best_target_name}"
         st.markdown(
-            f"- **Search 3D structures for this target (RCSB PDB):** "
+            f"- **Search 3D structures (RCSB PDB):** "
             f"[Open RCSB search]({rcsb_query})"
         )
+
+        uniprot_query = f"https://www.uniprot.org/uniprotkb?query={best_target_name}"
+        st.markdown(f"- **UniProt Search:** [Open UniProt]({uniprot_query})")
+
+        pdbe_query = f"https://www.ebi.ac.uk/pdbe/search/pdb?q={best_target_name}"
+        st.markdown(f"- **PDBe Search:** [Open PDBe]({pdbe_query})")
     else:
-        st.markdown(
-            "- No specific target with experimental IC50 identified; docking targets "
-            "would need to be selected manually."
-        )
+        st.info("No target with experimental IC50 found.")
+
+    # LIGAND STRUCTURE LINKS (PubChem)
+    if pubchem_meta and pubchem_meta.get("cid"):
+        cid = pubchem_meta["cid"]
+        st.markdown("### Ligand 3D Structures (PubChem)")
+
+        sdf_3d = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/SDF?record_type=3d"
+        st.markdown(f"- **3D SDF Download:** [SDF 3D]({sdf_3d})")
+
+        pdb_3d = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/record/PDB/?record_type=3d"
+        st.markdown(f"- **3D PDB Download:** [PDB 3D]({pdb_3d})")
+
+        viewer = f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}#section=3D-Conformer"
+        st.markdown(f"- **PubChem 3D Viewer:** [Open Viewer]({viewer})")
+    else:
+        st.info("No PubChem CID available for ligand 3D structure links.")
 
     st.markdown(
-        "To perform an actual docking study, you typically:\n"
-        "1. Obtain a **protein 3D structure** (PDB) for the target.\n"
-        "2. Prepare the **ligand 3D structure** from the SMILES.\n"
-        "3. Use a docking engine (e.g., AutoDock Vina, Smina, Glide) outside this app.\n"
-        "4. Analyze docking scores and poses alongside IC50 predictions."
+        """
+### How to Perform a Docking Study
+
+1. **Obtain a protein 3D structure (PDB)** for the target.  
+2. **Prepare the ligand 3D structure** from the SMILES (PubChem links above).  
+3. Use a **docking engine** such as AutoDock Vina, Smina, Glide, or GOLD.  
+4. Analyze **docking scores and poses** alongside predicted/experimental IC50 values.
+"""
     )
 
+    # Optional PDB viewer
     pdb_id = st.text_input(
         "Optional: Enter a PDB ID to visualize the protein structure (e.g., 4HG7):",
         value="",
@@ -678,12 +701,11 @@ if user_input:
                     view.addModel(pdb_block, "pdb")
                     view.setStyle({"cartoon": {"color": "spectrum"}})
                     view.zoomTo()
-                    view_html = view._make_html()
-                    st.components.v1.html(view_html, height=420, scrolling=False)
+                    st.components.v1.html(view._make_html(), height=420, scrolling=False)
                 else:
-                    st.info("Could not download PDB file for the given ID.")
+                    st.info("Could not download PDB file.")
             except Exception:
-                st.info("3D visualization failed for this PDB ID.")
+                st.info("3D visualization failed.")
         else:
             st.info(
                 "py3Dmol is not installed; 3D visualization is disabled. "
