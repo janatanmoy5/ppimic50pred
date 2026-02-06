@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 try:
     from rdkit import Chem, RDLogger
     from rdkit.Chem import Descriptors, Draw
+    from rdkit.Chem import AllChem
     RDLogger.DisableLog("rdApp.*")
     RDKit_AVAILABLE = True
 except ModuleNotFoundError:
@@ -349,6 +350,45 @@ def compute_rdkit_descriptors(smiles: str):
         return None
     return {name: func(mol) for name, func in Descriptors.descList}
 
+# ---------------- RDKit 3D conformer generation ---------------- #
+def generate_3d_molblock(smiles: str):
+    """
+    Generate a 3D conformer from SMILES using RDKit (ETKDG + UFF),
+    and return an SDF/Mol block string for py3Dmol.
+    """
+    if not RDKit_AVAILABLE:
+        return None
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    mol = Chem.AddHs(mol)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 0xf00d
+    try:
+        AllChem.EmbedMolecule(mol, params)
+        AllChem.UFFOptimizeMolecule(mol, maxIters=200)
+    except Exception:
+        return None
+    return Chem.MolToMolBlock(mol)
+
+def show_ligand_3d(smiles: str, width=400, height=350):
+    """
+    Show a spinning 3D ligand from SMILES using py3Dmol.
+    """
+    if not PY3DMOL_AVAILABLE:
+        st.info("py3Dmol is not installed; 3D ligand visualization is disabled.")
+        return
+    molblock = generate_3d_molblock(smiles)
+    if molblock is None:
+        st.info("Could not generate 3D conformer for this ligand.")
+        return
+    view = py3Dmol.view(width=width, height=height)
+    view.addModel(molblock, "sdf")
+    view.setStyle({"stick": {"radius": 0.2}, "sphere": {"scale": 0.25}})
+    view.zoomTo()
+    view.spin(True)
+    st.components.v1.html(view._make_html(), height=height + 20, scrolling=False)
+
 # ---------------- Input processing (SMILES-first) ---------------- #
 def process_input(user_input: str):
     raw = user_input.strip()
@@ -457,7 +497,6 @@ def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
 # ---------------- PubChem synonyms for PDB search ---------------- #
 def get_pubchem_synonyms(name):
     """Return PubChem depositor-supplied synonyms for a chemical name."""
-    # Try PubChemPy first
     if PUBCHEMPY_AVAILABLE:
         try:
             comps = pcp.get_compounds(name, "name")
@@ -468,7 +507,6 @@ def get_pubchem_synonyms(name):
         except Exception:
             pass
 
-    # Fallback: REST by CID
     cid = pubchem_name_to_cid_rest(name)
     if not cid:
         return []
@@ -490,7 +528,7 @@ def rcsb_search_ligand_safe(chemical_name, max_rows=100):
     the original brand name is not present in PDB.
     """
     synonyms = get_pubchem_synonyms(chemical_name)
-    search_terms = [chemical_name] + synonyms[:20]  # limit synonyms
+    search_terms = [chemical_name] + synonyms[:20]
 
     url = "https://search.rcsb.org/rcsbsearch/v2/query?json="
 
@@ -603,15 +641,20 @@ if user_input:
         )
         st.markdown(f"**SMILES:** `{smiles}`")
 
+        # 2D structure
         if RDKit_AVAILABLE:
             mol = Chem.MolFromSmiles(smiles)
             if mol:
                 img = Draw.MolToImage(mol, size=(280, 280))
-                st.image(img, caption=compound_name or "Structure", use_column_width=False)
+                st.image(img, caption="2D Structure", use_column_width=False)
             else:
-                st.info("Could not render molecular structure.")
+                st.info("Could not render 2D molecular structure.")
         else:
-            st.info("RDKit not available; structure rendering disabled.")
+            st.info("RDKit not available; 2D structure rendering disabled.")
+
+        # 3D ligand structure (spinning)
+        st.markdown("**3D Ligand Structure (py3Dmol)**")
+        show_ligand_3d(smiles, width=380, height=320)
 
     with col2:
         st.subheader("Predicted IC50")
@@ -742,7 +785,7 @@ if user_input:
             selected_pdb = st.selectbox("Select a PDB ID to visualize:", pdb_hits)
 
             if selected_pdb:
-                st.markdown("### 3D Structure Viewer")
+                st.markdown("### 3D Protein Structure Viewer (PDB)")
                 show_3d_structure(selected_pdb)
 
                 st.markdown("### Assembly & Symmetry Information")
