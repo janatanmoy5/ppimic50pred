@@ -676,9 +676,17 @@ if user_input:
         st.info("No experimental IC50 values found in ChEMBL for these structures.")
     else:
         df_ic50 = pd.DataFrame(all_ic50_rows)
+
+        # Build display dataframe safely
         df_ic50_display = df_ic50.copy()
+
+        # Ensure consistent naming
+        if "Organism" in df_ic50_display.columns:
+            df_ic50_display.rename(columns={"Organism": "organism"}, inplace=True)
+
+        # Add display columns
         df_ic50_display["IC50 (nM)"] = df_ic50_display["ic50_value"]
-        df_ic50_display["log10(IC50)"] = df_ic50_display["log10_ic50"]
+        df_ic50_display["Log10(IC50)"] = df_ic50_display["log10_ic50"]
 
         impressions = []
         for _, row in df_ic50_display.iterrows():
@@ -692,7 +700,7 @@ if user_input:
                 "target_name",
                 "target_id",
                 "target_type",
-                "Organism",
+                "organism",
                 "IC50 (nM)",
                 "units",
                 "pchembl_value",
@@ -797,14 +805,14 @@ if user_input:
                     info = asm.get("rcsb_assembly_info", {})
                     sym = asm.get("rcsb_struct_symmetry", [])
 
-                    st.write(f"**Entry ID:** {info.get('entry_id','N/A').strip()}")
+                    st.write(f"**Entry ID:** {str(info.get('entry_id','N/A')).strip()}")
                     st.write(
                         f"**Polymer Composition:** "
-                        f"{info.get('polymer_composition','N/A').strip()}"
+                        f"{str(info.get('polymer_composition','N/A')).strip()}"
                     )
                     st.write(
                         f"**Selected Polymer Types:** "
-                        f"{info.get('selected_polymer_entity_types','N/A').strip()}"
+                        f"{str(info.get('selected_polymer_entity_types','N/A')).strip()}"
                     )
                     st.write(
                         f"**Buried Surface Area:** "
@@ -815,10 +823,10 @@ if user_input:
                     if sym:
                         for s in sym:
                             st.markdown(
-                                f"- **Kind:** {s.get('kind','N/A').strip()}  \n"
-                                f"  **Type:** {s.get('type','N/A').strip()}  \n"
-                                f"  **Oligomeric State:** {s.get('oligomeric_state','N/A').strip()}  \n"
-                                f"  **Symbol:** {s.get('symbol','N/A').strip()}"
+                                f"- **Kind:** {str(s.get('kind','N/A')).strip()}  \n"
+                                f"  **Type:** {str(s.get('type','N/A')).strip()}  \n"
+                                f"  **Oligomeric State:** {str(s.get('oligomeric_state','N/A')).strip()}  \n"
+                                f"  **Symbol:** {str(s.get('symbol','N/A')).strip()}"
                             )
                     else:
                         st.write("No symmetry annotations available.")
