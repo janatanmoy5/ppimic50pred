@@ -597,8 +597,8 @@ def show_3d_structure(pdb_id):
 st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 st.markdown(
     "<h2 style='text-align:center;'>PPIM‑IC50Pred</h2>"
-    "<p style='text-align:center; color:#555;'>IC50 prediction for small molecules "
-    "(PubChem + ChEMBL, SMILES‑first, multi‑target)</p>",
+    "<p style='text-align:center; color:#555;'>IC50 Value prediction for Small Molecules "
+    "(Diverse Targets: Protein-protein interactions (PPIs), Single Protein, Cell Lines)</p>",
     unsafe_allow_html=True,
 )
 st.markdown("---")
