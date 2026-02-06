@@ -468,7 +468,7 @@ def row_impression(pred_log, exp_log):
         label = "predicted weaker"
     else:
         label = "predicted stronger"
-    return f"{label}: Δlog={delta_log:.4f}, ~{fold:.1f}×"
+    return f"{label}: Δlog={delta_log:.2f}, ~{fold:.1f}×"
 
 # ---------------- Log-scale potency interpretation ---------------- #
 def interpret_potency_logscale(pred_log, exp_log, pred_nM, exp_nM, units):
@@ -598,7 +598,7 @@ st.set_page_config(page_title="PPIM‑IC50Pred", layout="wide")
 st.markdown(
     "<h2 style='text-align:center;'>PPIM‑IC50Pred</h2>"
     "<p style='text-align:center; color:#555;'>IC50 Value prediction for Small Molecules "
-    "(Diverse Targets: Protein-protein interactions (PPIs), Single Protein, Cell Lines)</p>",
+    "(Diverse Targets: Protein-protein interactions, Single Protein, Cell Lines)</p>",
     unsafe_allow_html=True,
 )
 st.markdown("---")
@@ -660,10 +660,10 @@ if user_input:
         st.subheader("Predicted IC50")
         log_val, conf = predict_ic50(descriptors, MODEL_PATH)
         pred_nM = 10 ** log_val
-        st.markdown(f"- **Predicted log(IC50) [nM]:** `{log_val:.4f}`")
+        st.markdown(f"- **Predicted log(IC50) [nM]:** `{log_val:.2f}`")
         st.markdown(f"- **Predicted IC50:** `{pred_nM:.2f} nM`")
         if conf is not None:
-            st.markdown(f"- **Model R²:** `{conf:.4f}`")
+            st.markdown(f"- **Model R²:** `{conf:.2f}`")
 
     st.markdown("---")
     st.subheader("Experimental IC50 (ChEMBL) & Potency Interpretation")
@@ -715,7 +715,7 @@ if user_input:
         )
         st.markdown(f"- IC50: `{best_ic50:.2f} {best_units}`")
         if best_log is not None:
-            st.markdown(f"- log10(IC50): `{best_log:.4f}`")
+            st.markdown(f"- log10(IC50): `{best_log:.2f}`")
 
         st.markdown("**Predicted vs Experimental (nM + log scale):**")
         exp_log = best_log if best_log is not None else None
@@ -723,9 +723,9 @@ if user_input:
 
         if exp_log is not None:
             delta_log = pred_log - exp_log
-            st.markdown(f"- Predicted log(IC50): `{pred_log:.4f}`")
-            st.markdown(f"- Experimental log(IC50): `{exp_log:.4f}`")
-            st.markdown(f"- Δlog(IC50) (pred − exp): `{delta_log:.4f}`")
+            st.markdown(f"- Predicted log(IC50): `{pred_log:.2f}`")
+            st.markdown(f"- Experimental log(IC50): `{exp_log:.2f}`")
+            st.markdown(f"- Δlog(IC50) (pred − exp): `{delta_log:.2f}`")
         else:
             st.markdown("- Experimental log(IC50): `N/A`")
 
