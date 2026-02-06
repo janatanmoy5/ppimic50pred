@@ -692,11 +692,11 @@ if user_input:
                 "target_name",
                 "target_id",
                 "target_type",
-                "organism",
+                "Organism",
                 "IC50 (nM)",
                 "units",
                 "pchembl_value",
-                "log10(IC50)",
+                "Log10(IC50)",
                 "Impression",
                 "assay_type",
             ]
