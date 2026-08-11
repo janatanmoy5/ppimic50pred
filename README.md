@@ -22,7 +22,7 @@ This repository provides **two separate interfaces** to the same underlying rand
 | `random_forest_model.pkl` (repo root) | Trained random forest model + fitted scaler used by the Streamlit app |
 | `ppimic50pred/` | Nested Python package providing a **command-line interface**: `run_offline.py`, `run_online.py`, its own `run.py`, `random_forest_model.pkl`, `requirements.txt`, `setup.py`, `__init__.py` |
 | `analysis/analysis/PPIM-IC50pred.ipynb` | Jupyter notebook reproducing the study's descriptor generation, feature selection/SHAP analysis, model training and cross-validation, clustering, and multitarget validation — see [Notebook](#notebook) below |
-| `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `padel_blind.csv`, `padel_train.csv` |
+| `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `pubchem_blind.csv`, `padel_blind.csv`, `padel_train.csv` ,|
 | `analysis/dataset/rdkit/` | Downstream RDKit-based analysis outputs: feature importances, chemical-class breakdowns, structure- and feature-based cluster assignments, Tanimoto similarity heatmap — see [Data](#data) below |
 | `Manuscript/` | `Main_Manuscript_PPIM_IC50pred_TJ.docx`, `SM_PPIM_IC50pred_TJ.docx` |
 | `Dockerfile` | Container definition; launches the Streamlit app via `streamlit run run.py` |
