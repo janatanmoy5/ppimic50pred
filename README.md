@@ -20,12 +20,15 @@ This repository provides **two separate interfaces** to the same underlying rand
 |---|---|
 | `run.py` (repo root) | **Streamlit web application** powering the live demo; launched via `streamlit run run.py` |
 | `random_forest_model.pkl` (repo root) | Trained random forest model + fitted scaler used by the Streamlit app |
-| `ppimic50pred/` | Nested Python package providing a **command-line interface**, with its own `run_offline.py`, `run_online.py`, `random_forest_model.pkl`, `requirements.txt`, `setup.py`, and `__init__.py` |
-| `analysis/` | Notebooks/scripts for model training, cross-validation, clustering, and figure generation |
-| `Manuscript/` | Manuscript-related source files |
+| `ppimic50pred/` | Nested Python package providing a **command-line interface**: `run_offline.py`, `run_online.py`, its own `run.py`, `random_forest_model.pkl`, `requirements.txt`, `setup.py`, `__init__.py` |
+| `analysis/analysis/PPIM-IC50pred.ipynb` | Jupyter notebook reproducing the study's descriptor generation, feature selection/SHAP analysis, model training and cross-validation, clustering, and multitarget validation — see [Notebook](#notebook) below |
+| `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `padel_blind.csv` |
+| `Manuscript/` | `Main_Manuscript_PPIM_IC50pred_TJ.docx`, `SM_PPIM_IC50pred_TJ.docx` |
 | `Dockerfile` | Container definition; launches the Streamlit app via `streamlit run run.py` |
 | `render.yaml` | Deployment configuration for the hosted demo (Render) |
 | `requirements.txt` (repo root) | Dependencies for the Streamlit app |
+
+> **Before submission:** `analysis/dataset/` currently has 4 of the 6 expected descriptor-set CSVs — `pubchem_blind.csv` and `padel_train.csv` are not present. Add them (or note why they're withheld) so the datasets underlying Tables 1–2 are fully traceable. The `Manuscript/` files should also be updated to match the JCAMD-formatted submission rather than an earlier draft, and `ppimic50pred/__pycache__/` should be removed from version control via `.gitignore`.
 
 ## Installation
 
@@ -119,9 +122,32 @@ Opens a browser interface at `http://localhost:8501` accepting a chemical name, 
 
 🌐 Hosted version: [ppimic50pred.onrender.com](https://ppimic50pred.onrender.com/)
 
+## Notebook
+
+All analysis reported in the manuscript — descriptor generation (RDKit/PubChem/PaDEL), feature selection and SHAP analysis (Fig. 2), model training and cross-validation for RF/GB/SVR/LSTM (Table 1, Table 2, Fig. 3), structure- and feature-based clustering (Fig. 4), and the multitarget external validation (Fig. 5) — is contained in a single notebook:
+
+```
+analysis/analysis/PPIM-IC50pred.ipynb
+```
+
+(Note the repeated `analysis/analysis/` path — this looks like it may be an unintentional nested folder rather than a deliberate structure; consider flattening it to `analysis/PPIM-IC50pred.ipynb` for clarity, though either works as long as the README and repo agree.)
+
+Given this notebook covers the full pipeline in one file, it's worth adding markdown section headers inside it that map directly to manuscript sections/figures (e.g., "## 4.1 Feature selection — Fig. 2", "## 4.6 Multitarget validation — Fig. 5") if not already present, so a reviewer can navigate directly to the code behind any given result.
+
 ## Data
 
-The curated training, blind-set, and external multitarget validation datasets (3,451 + 1,528 compounds, ChEMBL-derived, with computed RDKit/PubChem/PaDEL descriptors) used in the manuscript are described in Supplementary Table S1. [Confirm here whether the processed datasets are included in this repository, hosted elsewhere, or available on request, and update this section and your manuscript's Data Availability statement to match exactly.]
+The processed descriptor/bioactivity datasets are in `analysis/dataset/`:
+
+| File | Descriptor set | Split |
+|---|---|---|
+| `rdkit_train.csv` | RDKit | Training (2,760 molecules, 195 features) |
+| `rdkit_blind.csv` | RDKit | Blind set (691 molecules) |
+| `pubchem_train.csv` | PubChem | Training (2,755 molecules, 17 features) |
+| `padel_blind.csv` | PaDEL | Blind set (586 molecules) |
+
+**Missing:** `pubchem_blind.csv` (689 molecules) and `padel_train.csv` (2,340 molecules, 1,356 features) are reported in the manuscript's Tables 1–2 but are not present in this folder. Add them before submission so all six train/blind combinations across the three descriptor sets are reproducible from this repository, or update the manuscript's Data Availability statement to accurately reflect what is and isn't included.
+
+The external multitarget validation set (1,528 compounds) referenced in Section 4.6/Fig. 5 is not listed above either — confirm whether it's included elsewhere in the repo (e.g., inside the notebook itself) or needs to be added.
 
 ## Citation
 
