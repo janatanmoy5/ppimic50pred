@@ -132,31 +132,18 @@ Opens a browser interface at `http://localhost:8501` accepting a chemical name, 
 
 ## Data
 
-The processed descriptor/bioactivity datasets are in `analysis/dataset/`:
+`analysis/dataset/` contains the processed descriptor/bioactivity datasets for the three descriptor sets used in the study:
 
-| File | Descriptor set | Split |
+| Descriptor set | Training | Blind set |
 |---|---|---|
-| `rdkit_train.csv` | RDKit | Training (2,760 molecules, 195 features) |
-| `rdkit_blind.csv` | RDKit | Blind set (691 molecules) |
-| `pubchem_train.csv` | PubChem | Training (2,755 molecules, 17 features) |
-| `padel_blind.csv` | PaDEL | Blind set (586 molecules) |
-| `padel_train.csv` | PaDEL | Training (2,340 molecules, 1,356 features) |
+| RDKit | `rdkit_train.csv` (2,760 molecules, 195 features) | `rdkit_blind.csv` (691 molecules) |
+| PubChem | `pubchem_train.csv` (2,755 molecules, 17 features) | `pubchem_blind.csv` (689 molecules) |
+| PaDEL | `padel_train.csv` (2,340 molecules, 1,356 features) | `padel_blind.csv` (586 molecules) |
 
-**Missing:** `pubchem_blind.csv` (689 molecules), reported in the manuscript's Tables 1–2, is not yet present in this folder. Add it before submission so all six train/blind combinations across the three descriptor sets are reproducible from this repository, or update the manuscript's Data Availability statement to accurately reflect what is and isn't included.
+Other files in this folder:
 
-The external multitarget validation set (1,528 compounds) referenced in Section 4.6/Fig. 5 is not listed above either — confirm whether it's included elsewhere in the repo (e.g., inside the notebook itself) or needs to be added.
-
-`analysis/dataset/rdkit/` contains downstream outputs derived from the RDKit descriptor set, supporting the structure- and feature-based clustering analysis (Section 4.4–4.5, Fig. 4):
-
-| File(s) | Description |
-|---|---|
-| `feature_importances.csv`, `feature_importances_plot.png` | Feature importance ranking (Fig. 2A) |
-| `rdkit_cluster_0.csv` – `rdkit_cluster_4.csv` | Structure-based (Butina) cluster assignments |
-| `rdkit_chemical_class_*.csv` (35 files) | Compounds grouped by the six physicochemical-property classes (size, polarity, ring type, flexibility, hydrophobicity) described in Section 4.5 |
-| `rdkit_kmeans_cluster_0.csv` – `rdkit_kmeans_cluster_4.csv` | Feature-based (K-means) cluster assignments |
-| `rdkit_clusters_and_classes.csv`, `rdkit_clusters_and_classes_reduced.csv`, `rdkit_clusters_with_ids.csv` | Combined cluster/class mapping tables |
-| `tanimoto_similarity_clustermap.png` | Tanimoto similarity heatmap (Fig. 4B) |
-| `rf_surrogate_linear_coeffs.csv` | Coefficients from a linear surrogate model fit to approximate the random forest — supplementary interpretability output not otherwise described in the manuscript |
+- `get2p2idb.xlsx`, `ALL_PPIS_dataset_new.xlsx`, `ALL_PPIS_ic50_results.csv` — source/raw dataset files underlying the descriptor sets above
+- `rdkit/` — downstream RDKit-based analysis outputs (feature importances, structure- and feature-based clustering, Tanimoto similarity heatmap) supporting Section 4.4–4.5, Fig. 4
 
 ## Citation
 
