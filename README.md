@@ -1,4 +1,4 @@
-ppimic50pred 
+# ppimic50pred 
 
 
 Supervised machine learning framework for predicting small-molecule bioactivity (IC₅₀) against protein–protein interactions (PPIs), single proteins, and cell-based assays.
