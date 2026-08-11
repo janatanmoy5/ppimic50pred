@@ -148,7 +148,6 @@ If you use this tool or model in your research, please cite:
 
 ## License
 
-[No license file currently specified. Since the manuscript describes this as a "freely available, open-source implementation," add a `LICENSE` file — MIT or Apache-2.0 are common, permissive choices for academic software — so that reuse terms are unambiguous to readers and reviewers.]
 
 ## Contact
 
