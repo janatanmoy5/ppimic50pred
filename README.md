@@ -24,7 +24,6 @@ This repository provides **two separate interfaces** to the same underlying rand
 | `analysis/analysis/PPIM-IC50pred.ipynb` | Jupyter notebook reproducing the study's descriptor generation, feature selection/SHAP analysis, model training and cross-validation, clustering, and multitarget validation — see [Notebook](#notebook) below |
 | `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `pubchem_blind.csv`, `padel_blind.csv`, `padel_train.csv` ,|
 | `analysis/dataset/rdkit/` | Downstream RDKit-based analysis outputs: feature importances, chemical-class breakdowns, structure- and feature-based cluster assignments, Tanimoto similarity heatmap — see [Data](#data) below |
-| `Manuscript/` | `Main_Manuscript_PPIM_IC50pred_TJ.docx`, `SM_PPIM_IC50pred_TJ.docx` |
 | `Dockerfile` | Container definition; launches the Streamlit app via `streamlit run run.py` |
 | `render.yaml` | Deployment configuration for the hosted demo (Render) |
 | `requirements.txt` (repo root) | Dependencies for the Streamlit app |
