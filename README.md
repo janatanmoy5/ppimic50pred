@@ -4,7 +4,7 @@ Supervised machine learning framework for predicting small-molecule bioactivity 
 
 This repository accompanies the manuscript **"Supervised Learning-Driven Prediction of Small-Molecule Modulator Bioactivity Against Protein–Protein Interactions"** (Jana T, Karmakar J, Banerjee R, Saha S; submitted to *Journal of Computer-Aided Molecular Design*). It provides the trained random forest model, prediction scripts, and analysis code used in that study, benchmarking RDKit, PubChem, and PaDEL molecular descriptors across four supervised regressors (random forest, gradient boosting, support vector regression, and LSTM) on a curated ChEMBL dataset of 3,451 compounds spanning 176 biological targets.
 
-🌐 **Live demo:** [ppimic50pred.onrender.com](https://ppimic50pred.onrender.com/)
+🌐 **Run** [ppimic50pred.onrender.com](https://ppimic50pred.onrender.com/)
 
 ## Overview
 
