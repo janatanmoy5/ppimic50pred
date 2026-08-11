@@ -151,11 +151,10 @@ If you use this tool or model in your research, please cite:
 
 > Jana T, Karmakar J, Banerjee R, Saha S. Supervised Learning-Driven Prediction of Small-Molecule Modulator Bioactivity Against Protein–Protein Interactions. *Journal of Computer-Aided Molecular Design* (in press).
 
-*(Update with the final volume/page/DOI once the article is published.)*
 
 ## License
 
-No license file is currently specified. Since the manuscript describes this as a "freely available, open-source implementation," add a `LICENSE` file — MIT or Apache-2.0 are common, permissive choices for academic software — so that reuse terms are unambiguous to readers and reviewers.
+No license file is currently specified. Since the manuscript describes this as a "freely available, open-source implementation," 
 
 ## Contact
 
