@@ -22,13 +22,14 @@ This repository provides **two separate interfaces** to the same underlying rand
 | `random_forest_model.pkl` (repo root) | Trained random forest model + fitted scaler used by the Streamlit app |
 | `ppimic50pred/` | Nested Python package providing a **command-line interface**: `run_offline.py`, `run_online.py`, its own `run.py`, `random_forest_model.pkl`, `requirements.txt`, `setup.py`, `__init__.py` |
 | `analysis/analysis/PPIM-IC50pred.ipynb` | Jupyter notebook reproducing the study's descriptor generation, feature selection/SHAP analysis, model training and cross-validation, clustering, and multitarget validation — see [Notebook](#notebook) below |
-| `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `padel_blind.csv` |
+| `analysis/dataset/` | Processed descriptor/bioactivity CSVs: `rdkit_train.csv`, `rdkit_blind.csv`, `pubchem_train.csv`, `padel_blind.csv`, `padel_train.csv` |
+| `analysis/dataset/rdkit/` | Downstream RDKit-based analysis outputs: feature importances, chemical-class breakdowns, structure- and feature-based cluster assignments, Tanimoto similarity heatmap — see [Data](#data) below |
 | `Manuscript/` | `Main_Manuscript_PPIM_IC50pred_TJ.docx`, `SM_PPIM_IC50pred_TJ.docx` |
 | `Dockerfile` | Container definition; launches the Streamlit app via `streamlit run run.py` |
 | `render.yaml` | Deployment configuration for the hosted demo (Render) |
 | `requirements.txt` (repo root) | Dependencies for the Streamlit app |
 
-> **Before submission:** `analysis/dataset/` currently has 4 of the 6 expected descriptor-set CSVs — `pubchem_blind.csv` and `padel_train.csv` are not present. Add them (or note why they're withheld) so the datasets underlying Tables 1–2 are fully traceable. The `Manuscript/` files should also be updated to match the JCAMD-formatted submission rather than an earlier draft, and `ppimic50pred/__pycache__/` should be removed from version control via `.gitignore`.
+> **Before submission:** `analysis/dataset/` now includes 5 of the 6 expected descriptor-set CSVs — `pubchem_blind.csv` is still missing. Add it (or note why it's withheld) so the dataset underlying Tables 1–2 is fully traceable. The `Manuscript/` files should also be updated to match the JCAMD-formatted submission rather than an earlier draft.
 
 ## Installation
 
@@ -138,6 +139,29 @@ Given this notebook covers the full pipeline in one file, it's worth adding mark
 
 The processed descriptor/bioactivity datasets are in `analysis/dataset/`:
 
+| File | Descriptor set | Split |
+|---|---|---|
+| `rdkit_train.csv` | RDKit | Training (2,760 molecules, 195 features) |
+| `rdkit_blind.csv` | RDKit | Blind set (691 molecules) |
+| `pubchem_train.csv` | PubChem | Training (2,755 molecules, 17 features) |
+| `padel_blind.csv` | PaDEL | Blind set (586 molecules) |
+| `padel_train.csv` | PaDEL | Training (2,340 molecules, 1,356 features) |
+
+**Missing:** `pubchem_blind.csv` (689 molecules), reported in the manuscript's Tables 1–2, is not yet present in this folder. Add it before submission so all six train/blind combinations across the three descriptor sets are reproducible from this repository, or update the manuscript's Data Availability statement to accurately reflect what is and isn't included.
+
+The external multitarget validation set (1,528 compounds) referenced in Section 4.6/Fig. 5 is not listed above either — confirm whether it's included elsewhere in the repo (e.g., inside the notebook itself) or needs to be added.
+
+`analysis/dataset/rdkit/` contains downstream outputs derived from the RDKit descriptor set, supporting the structure- and feature-based clustering analysis (Section 4.4–4.5, Fig. 4):
+
+| File(s) | Description |
+|---|---|
+| `feature_importances.csv`, `feature_importances_plot.png` | Feature importance ranking (Fig. 2A) |
+| `rdkit_cluster_0.csv` – `rdkit_cluster_4.csv` | Structure-based (Butina) cluster assignments |
+| `rdkit_chemical_class_*.csv` (35 files) | Compounds grouped by the six physicochemical-property classes (size, polarity, ring type, flexibility, hydrophobicity) described in Section 4.5 |
+| `rdkit_kmeans_cluster_0.csv` – `rdkit_kmeans_cluster_4.csv` | Feature-based (K-means) cluster assignments |
+| `rdkit_clusters_and_classes.csv`, `rdkit_clusters_and_classes_reduced.csv`, `rdkit_clusters_with_ids.csv` | Combined cluster/class mapping tables |
+| `tanimoto_similarity_clustermap.png` | Tanimoto similarity heatmap (Fig. 4B) |
+| `rf_surrogate_linear_coeffs.csv` | Coefficients from a linear surrogate model fit to approximate the random forest — supplementary interpretability output not otherwise described in the manuscript |
 
 ## Citation
 
@@ -145,9 +169,11 @@ If you use this tool or model in your research, please cite:
 
 > Jana T, Karmakar J, Banerjee R, Saha S. Supervised Learning-Driven Prediction of Small-Molecule Modulator Bioactivity Against Protein–Protein Interactions. *Journal of Computer-Aided Molecular Design* (in press).
 
+*(Update with the final volume/page/DOI once the article is published.)*
 
 ## License
 
+No license file is currently specified. Since the manuscript describes this as a "freely available, open-source implementation," add a `LICENSE` file — MIT or Apache-2.0 are common, permissive choices for academic software — so that reuse terms are unambiguous to readers and reviewers.
 
 ## Contact
 
