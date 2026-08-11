@@ -123,15 +123,12 @@ Opens a browser interface at `http://localhost:8501` accepting a chemical name, 
 
 ## Notebook
 
-All analysis reported in the manuscript — descriptor generation (RDKit/PubChem/PaDEL), feature selection and SHAP analysis (Fig. 2), model training and cross-validation for RF/GB/SVR/LSTM (Table 1, Table 2, Fig. 3), structure- and feature-based clustering (Fig. 4), and the multitarget external validation (Fig. 5) — is contained in a single notebook:
+`analysis/analysis/` contains four Jupyter notebooks with the full runtime code and results for the study's analysis pipeline (descriptor generation, feature selection, model training/cross-validation, clustering, and multitarget validation):
 
-```
-analysis/analysis/PPIM-IC50pred.ipynb
-```
-
-(Note the repeated `analysis/analysis/` path — this looks like it may be an unintentional nested folder rather than a deliberate structure; consider flattening it to `analysis/PPIM-IC50pred.ipynb` for clarity, though either works as long as the README and repo agree.)
-
-Given this notebook covers the full pipeline in one file, it's worth adding markdown section headers inside it that map directly to manuscript sections/figures (e.g., "## 4.1 Feature selection — Fig. 2", "## 4.6 Multitarget validation — Fig. 5") if not already present, so a reviewer can navigate directly to the code behind any given result.
+- `PPIM-IC50pred.ipynb`
+- `PPIM-IC50pred_2nd_part.ipynb`
+- `PPIM-IC50pred_3rd_part.ipynb`
+- `PPIM-IC50pred_4th_part.ipynb`
 
 ## Data
 
