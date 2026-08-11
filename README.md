@@ -6,6 +6,12 @@ Supervised machine learning framework for predicting small-molecule bioactivity 
 This repository accompanies the manuscript "Supervised Learning-Driven Prediction of Small-Molecule Modulator Bioactivity Against Protein–Protein Interactions" (Jana T, Karmakar J, Banerjee R, Saha S; submitted to Journal of Computer-Aided Molecular Design). It provides the trained random forest model, prediction scripts, and analysis code used in that study, benchmarking RDKit, PubChem, and PaDEL molecular descriptors across four supervised regressors (random forest, gradient boosting, support vector regression, and LSTM) on a curated ChEMBL dataset of 3,451 compounds spanning 176 biological targets.
 It is available at https://ppimic50pred.onrender.com/
 
+# Overview
+Input: a small-molecule SMILES string, ChEMBL ID, compound name, or molecular formula.
+Output: predicted Log₁₀(IC₅₀), with an optional comparison against experimentally reported ChEMBL bioactivity values when run in online mode.
+Model: random forest regressor trained on 217 RDKit descriptors (195 after feature selection), achieving R² = 0.75 / RMSE = 0.78 in cross-validation and R² = 0.74 / RMSE = 0.79 on a held-out blind set. See the manuscript for full performance benchmarks, feature-importance analysis, and known generalization limits on structurally novel targets.
+
+
 # ⚙️ Installation
 
 Clone the repository and install required dependencies:
