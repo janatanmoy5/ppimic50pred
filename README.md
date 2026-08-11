@@ -138,16 +138,6 @@ Given this notebook covers the full pipeline in one file, it's worth adding mark
 
 The processed descriptor/bioactivity datasets are in `analysis/dataset/`:
 
-| File | Descriptor set | Split |
-|---|---|---|
-| `rdkit_train.csv` | RDKit | Training (2,760 molecules, 195 features) |
-| `rdkit_blind.csv` | RDKit | Blind set (691 molecules) |
-| `pubchem_train.csv` | PubChem | Training (2,755 molecules, 17 features) |
-| `padel_blind.csv` | PaDEL | Blind set (586 molecules) |
-
-**Missing:** `pubchem_blind.csv` (689 molecules) and `padel_train.csv` (2,340 molecules, 1,356 features) are reported in the manuscript's Tables 1–2 but are not present in this folder. Add them before submission so all six train/blind combinations across the three descriptor sets are reproducible from this repository, or update the manuscript's Data Availability statement to accurately reflect what is and isn't included.
-
-The external multitarget validation set (1,528 compounds) referenced in Section 4.6/Fig. 5 is not listed above either — confirm whether it's included elsewhere in the repo (e.g., inside the notebook itself) or needs to be added.
 
 ## Citation
 
