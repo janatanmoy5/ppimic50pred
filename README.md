@@ -29,7 +29,6 @@ This repository provides **two separate interfaces** to the same underlying rand
 | `render.yaml` | Deployment configuration for the hosted demo (Render) |
 | `requirements.txt` (repo root) | Dependencies for the Streamlit app |
 
-> **Before submission:** `analysis/dataset/` now includes 5 of the 6 expected descriptor-set CSVs — `pubchem_blind.csv` is still missing. Add it (or note why it's withheld) so the dataset underlying Tables 1–2 is fully traceable. The `Manuscript/` files should also be updated to match the JCAMD-formatted submission rather than an earlier draft.
 
 ## Installation
 
